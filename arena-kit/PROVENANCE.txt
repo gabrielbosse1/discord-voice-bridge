@@ -1,0 +1,66 @@
+--- build/libs ---
+total 39592
+-rw-r--r-- 1 runner runner 19374180 Nov  2 23:48 discord_voice_bridge-1.0.0-all.jar
+-rw-r--r-- 1 runner runner 21161849 Nov  2 23:48 discord_voice_bridge-1.0.0.jar
+ci-artifact files:
+ci-artifact/discord_voice_bridge-1.0.0.jar 21161849
+21:    "fabricloader": ">=0.20.1",
+22:    "fabric-api": ">=0.165.0",
+arena-kit/srv/fabric-server-launch.jar 616
+arena-kit/srv/libraries/org/ow2/asm/asm-tree/9.10.1/asm-tree-9.10.1.jar 51958
+arena-kit/srv/libraries/org/ow2/asm/asm-analysis/9.10.1/asm-analysis-9.10.1.jar 35140
+arena-kit/srv/libraries/org/ow2/asm/asm/9.10.1/asm-9.10.1.jar 126151
+arena-kit/srv/libraries/org/ow2/asm/asm-util/9.10.1/asm-util-9.10.1.jar 95628
+arena-kit/srv/libraries/org/ow2/asm/asm-commons/9.10.1/asm-commons-9.10.1.jar 74840
+arena-kit/srv/libraries/net/fabricmc/fabric-loader/0.20.1/fabric-loader-0.20.1.jar 1988880
+arena-kit/srv/libraries/net/fabricmc/sponge-mixin/0.17.5+mixin.0.8.7/sponge-mixin-0.17.5+mixin.0.8.7.jar 1551593
+arena-kit/srv/server.jar 62294556
+=== java ===
+openjdk version "25.0.5" 2026-10-20 LTS
+OpenJDK Runtime Environment Temurin-25.0.5+8 (build 25.0.5+8-LTS)
+OpenJDK 64-Bit Server VM Temurin-25.0.5+8 (build 25.0.5+8-LTS, mixed mode, sharing)
+javac 25.0.5
+=== gradle ===
+
+------------------------------------------------------------
+Gradle 9.8.2
+------------------------------------------------------------
+
+Build time:    2026-10-19 16:29:26 UTC
+Revision:      8de7bcf76e785507ad92f0741ab9235a430c95e6
+
+Kotlin:        2.4.10
+Groovy:        4.0.33
+Ant:           Apache Ant(TM) version 1.10.17 compiled on April 6 2026
+Launcher JVM:  25.0.5 (Eclipse Adoptium 25.0.5+8-LTS)
+Daemon JVM:    /usr/lib/jvm/temurin-25-jdk-amd64 (no Daemon JVM specified, using current Java home)
+OS:            Linux 7.0.0-1017-azure amd64
+
+=== arena-kit files ===
+arena-kit/PROVENANCE.txt 1813
+arena-kit/control-1.0.0.jar 21161849
+arena-kit/control-build-resources-fabric.mod.json 621
+arena-kit/fixed-1.0.0.jar 21161849
+arena-kit/fixed-build-resources-fabric.mod.json 625
+arena-kit/installed-ci.jar 21161849
+arena-kit/libraries/net/fabricmc/fabric-loader/0.20.1/fabric-loader-0.20.1.jar 1988880
+arena-kit/libraries/net/fabricmc/sponge-mixin/0.17.5+mixin.0.8.7/sponge-mixin-0.17.5+mixin.0.8.7.jar 1551593
+arena-kit/libraries/org/ow2/asm/asm-analysis/9.10.1/asm-analysis-9.10.1.jar 35140
+arena-kit/libraries/org/ow2/asm/asm-commons/9.10.1/asm-commons-9.10.1.jar 74840
+arena-kit/libraries/org/ow2/asm/asm-tree/9.10.1/asm-tree-9.10.1.jar 51958
+arena-kit/libraries/org/ow2/asm/asm-util/9.10.1/asm-util-9.10.1.jar 95628
+arena-kit/libraries/org/ow2/asm/asm/9.10.1/asm-9.10.1.jar 126151
+arena-kit/srv/fabric-server-launch.jar 616
+arena-kit/srv/libraries/net/fabricmc/fabric-loader/0.20.1/fabric-loader-0.20.1.jar 1988880
+arena-kit/srv/libraries/net/fabricmc/sponge-mixin/0.17.5+mixin.0.8.7/sponge-mixin-0.17.5+mixin.0.8.7.jar 1551593
+arena-kit/srv/libraries/org/ow2/asm/asm-analysis/9.10.1/asm-analysis-9.10.1.jar 35140
+arena-kit/srv/libraries/org/ow2/asm/asm-commons/9.10.1/asm-commons-9.10.1.jar 74840
+arena-kit/srv/libraries/org/ow2/asm/asm-tree/9.10.1/asm-tree-9.10.1.jar 51958
+arena-kit/srv/libraries/org/ow2/asm/asm-util/9.10.1/asm-util-9.10.1.jar 95628
+arena-kit/srv/libraries/org/ow2/asm/asm/9.10.1/asm-9.10.1.jar 126151
+arena-kit/voicechat-fabric-2.6.27+26.3.jar 5611159
+=== sha256 ===
+e36df57ab9a46e4adced60c0f438fc53326668062ac0abd9128f965d5b6cecce  arena-kit/control-1.0.0.jar
+b55fa1e9bd62da4350e55994a57100396ddc370f9746713ff8669a94457d24f9  arena-kit/fixed-1.0.0.jar
+e36df57ab9a46e4adced60c0f438fc53326668062ac0abd9128f965d5b6cecce  arena-kit/installed-ci.jar
+9e1c93144a3f7498e546102f6786aea6e4992866c4c5d21bd2e0edb702399153  arena-kit/voicechat-fabric-2.6.27+26.3.jar

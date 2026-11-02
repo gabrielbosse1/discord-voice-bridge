@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "id": "discord_voice_bridge",
+  "version": "1.0.0",
+  "name": "Discord Voice Bridge",
+  "description": "Bridges Discord Voice Chat with Simple Voice Chat on a dedicated server.",
+  "authors": [
+    "discordvoicebridge"
+  ],
+  "license": "MIT",
+  "environment": "server",
+  "entrypoints": {
+    "server": [
+      "com.discordvoicebridge.DiscordVoiceBridgeMod"
+    ]
+  },
+  "mixins": [
+    "discord_voice_bridge.mixins.json"
+  ],
+  "depends": {
+    "fabricloader": ">=0.20.1",
+    "fabric-api": ">=0.165.0",
+    "minecraft": "~26.3",
+    "java": ">=25"
+  },
+  "suggests": {
+    "voicechat": "*"
+  }
+}
