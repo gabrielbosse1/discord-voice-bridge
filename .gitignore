@@ -1,0 +1,13 @@
+.gradle/
+build/
+devlibs/
+run/
+logs/
+*.iml
+.idea/
+.vscode/
+out/
+classes/
+
+# SVC jar is not redistributable; every dev provides their own copy (see README)
+libs/*.jar

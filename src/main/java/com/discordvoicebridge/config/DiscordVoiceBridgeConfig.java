@@ -1,0 +1,153 @@
+package com.discordvoicebridge.config;
+
+import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
+import com.google.gson.JsonSyntaxException;
+
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.Objects;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+/**
+ * Thread-safe mod configuration persisted to JSON.
+ * All keys and logic are in English; only user-facing output is localized.
+ */
+public class DiscordVoiceBridgeConfig {
+
+    private static final Logger LOGGER = LoggerFactory.getLogger("discord_voice_bridge");
+    private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
+
+    private final Path configPath;
+    private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock();
+
+    // ----- configuration keys (English, never localized) -----
+    private String token = "";
+    private String voiceChannelId = "";
+    private String groupName = "Discord Voice Bridge";
+    private String botDisplayName = "Discord Bot";
+    private String botSkinUrl = "";
+    private String groupType = "NORMAL"; // NORMAL | ISOLATED
+    private boolean enabled = true;
+
+    public DiscordVoiceBridgeConfig(Path configPath) {
+        this.configPath = Objects.requireNonNull(configPath);
+    }
+
+    public void load() {
+        lock.writeLock().lock();
+        try {
+            if (!Files.exists(configPath)) {
+                save(); // create defaults
+                return;
+            }
+            String json = Files.readString(configPath, StandardCharsets.UTF_8);
+            DiscordVoiceBridgeConfig parsed = GSON.fromJson(json, DiscordVoiceBridgeConfig.class);
+            if (parsed == null) {
+                throw new JsonSyntaxException("config parsed to null");
+            }
+            this.token = parsed.token == null ? "" : parsed.token;
+            this.voiceChannelId = parsed.voiceChannelId == null ? "" : parsed.voiceChannelId;
+            this.groupName = parsed.groupName == null ? "Discord Voice Bridge" : parsed.groupName;
+            this.botDisplayName = parsed.botDisplayName == null ? "Discord Bot" : parsed.botDisplayName;
+            this.botSkinUrl = parsed.botSkinUrl == null ? "" : parsed.botSkinUrl;
+            this.groupType = parsed.groupType == null ? "NORMAL" : parsed.groupType;
+            this.enabled = parsed.enabled;
+            LOGGER.info("Loaded configuration from {}", configPath);
+        } catch (JsonSyntaxException | IOException e) {
+            LOGGER.warn("Failed to load config from {}, using defaults: {}", configPath, e.getMessage());
+        } finally {
+            lock.writeLock().unlock();
+        }
+    }
+
+    public void save() {
+        lock.writeLock().lock();
+        try {
+            Files.createDirectories(configPath.getParent());
+            String json = GSON.toJson(this);
+            Files.writeString(configPath, json, StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            LOGGER.error("Failed to save config to {}", configPath, e);
+        } finally {
+            lock.writeLock().unlock();
+        }
+    }
+
+    // ----- getters (read lock) -----
+
+    public String getToken() {
+        lock.readLock().lock();
+        try { return token; } finally { lock.readLock().unlock(); }
+    }
+
+    public void setToken(String token) {
+        lock.writeLock().lock();
+        try { this.token = token; } finally { lock.writeLock().unlock(); }
+    }
+
+    public String getVoiceChannelId() {
+        lock.readLock().lock();
+        try { return voiceChannelId; } finally { lock.readLock().unlock(); }
+    }
+
+    public void setVoiceChannelId(String voiceChannelId) {
+        lock.writeLock().lock();
+        try { this.voiceChannelId = voiceChannelId; } finally { lock.writeLock().unlock(); }
+    }
+
+    public String getGroupName() {
+        lock.readLock().lock();
+        try { return groupName; } finally { lock.readLock().unlock(); }
+    }
+
+    public void setGroupName(String groupName) {
+        lock.writeLock().lock();
+        try { this.groupName = groupName; } finally { lock.writeLock().unlock(); }
+    }
+
+    public String getBotDisplayName() {
+        lock.readLock().lock();
+        try { return botDisplayName; } finally { lock.readLock().unlock(); }
+    }
+
+    public void setBotDisplayName(String botDisplayName) {
+        lock.writeLock().lock();
+        try { this.botDisplayName = botDisplayName; } finally { lock.writeLock().unlock(); }
+    }
+
+    public String getBotSkinUrl() {
+        lock.readLock().lock();
+        try { return botSkinUrl; } finally { lock.readLock().unlock(); }
+    }
+
+    public void setBotSkinUrl(String botSkinUrl) {
+        lock.writeLock().lock();
+        try { this.botSkinUrl = botSkinUrl; } finally { lock.writeLock().unlock(); }
+    }
+
+    public String getGroupType() {
+        lock.readLock().lock();
+        try { return groupType; } finally { lock.readLock().unlock(); }
+    }
+
+    public void setGroupType(String groupType) {
+        lock.writeLock().lock();
+        try { this.groupType = groupType; } finally { lock.writeLock().unlock(); }
+    }
+
+    public boolean isEnabled() {
+        lock.readLock().lock();
+        try { return enabled; } finally { lock.readLock().unlock(); }
+    }
+
+    public void setEnabled(boolean enabled) {
+        lock.writeLock().lock();
+        try { this.enabled = enabled; } finally { lock.writeLock().unlock(); }
+    }
+}

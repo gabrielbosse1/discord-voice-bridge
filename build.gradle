@@ -1,0 +1,113 @@
+plugins {
+    id 'fabric-loom' version '1.8-SNAPSHOT'
+    id 'maven-publish'
+    id 'com.github.johnrengelman.shadow' version '8.1.1'
+}
+
+version = '1.0.0'
+group = 'com.discordvoicebridge'
+
+repositories {
+    maven { url 'https://maven.maxhenkel.de/repository/public/' }
+    mavenCentral()
+    maven { url 'https://maven.fabricmc.net/' }
+}
+
+dependencies {
+    minecraft "com.mojang:minecraft:1.21.1"
+    mappings "net.fabricmc:yarn:1.21.1+build.1:v2"
+    modImplementation "net.fabricmc.fabric-api:fabric-api:0.116.17+1.21.1"
+    // mixin provides @Mixin/@Inject annotations at compile time (loom 1.8-SNAPSHOT does not inject it).
+    compileOnly "net.fabricmc:sponge-mixin:0.11.4+mixin.0.8.5"
+
+    // SVC public API only. The voicechat-fabric runtime jar (1.21.1-2.6.27) must be
+    // placed in libs/ by the developer/server operator (it is not redistributable here).
+    // modCompileOnly gives access to CommonCompatibilityManager (API instance bootstrap);
+    // all other SVC calls stay on the public api artifact.
+    compileOnly "de.maxhenkel.voicechat:voicechat-api:2.6.27"
+    modCompileOnly files("libs/voicechat-fabric-1.21.1-2.6.27.jar")
+    modRuntimeOnly files("libs/voicechat-fabric-1.21.1-2.6.27.jar")
+
+    // JDA (5.x, includes opus-java native) + admin permission API.
+    implementation "net.dv8tion:JDA:5.5.1"
+    modImplementation "me.lucko:fabric-permissions-api:0.3.1"
+    include "me.lucko:fabric-permissions-api:0.3.1"
+
+    testImplementation "org.junit.jupiter:junit-jupiter:5.11.4"
+    testImplementation "de.maxhenkel.voicechat:voicechat-api:2.6.27"
+}
+
+tasks.named('processResources') {
+    inputs.property 'version', project.version
+    filesMatching('fabric.mod.json') {
+        expand version: project.version
+    }
+}
+
+configurations {
+    // Resolvable view of `implementation` for shadowJar (Gradle 8 forbids resolving
+    // `implementation` directly). slf4j is provided by Fabric and must not be bundled.
+    shadowRuntime {
+        canBeResolved = true
+        canBeConsumed = false
+        extendsFrom configurations.implementation
+        exclude group: 'org.slf4j'
+    }
+}
+
+/**
+ * Shade JDA and its transitive dependencies into our own namespace so they
+ * don't collide with other mods (Jackson, OkHttp, Okio, ...).
+ * slf4j stays out: Fabric provides its own binder.
+ * fabric-permissions-api stays out too: loom ships it nested (see `include`).
+ */
+shadowJar {
+    configurations = [project.configurations.shadowRuntime]
+    relocate 'net.dv8tion.jda', 'discordvoicebridge.jda'
+    relocate 'club.minnced', 'discordvoicebridge.shaded.opusjava'
+    relocate 'com.neovisionaries', 'discordvoicebridge.shaded.neovisionaries'
+    relocate 'okhttp3', 'discordvoicebridge.shaded.okhttp'
+    relocate 'okio', 'discordvoicebridge.shaded.okio'
+    relocate 'com.fasterxml.jackson', 'discordvoicebridge.shaded.jackson'
+    relocate 'org.apache.commons.collections4', 'discordvoicebridge.shaded.commons-collections4'
+    relocate 'net.sf.trove4j', 'discordvoicebridge.shaded.trove4j'
+    relocate 'com.github.benmanes.caffeine', 'discordvoicebridge.shaded.caffeine'
+    relocate 'com.typesafe.config', 'discordvoicebridge.shaded.typesafe'
+    relocate 'org.reactivestreams', 'discordvoicebridge.shaded.reactivestreams'
+    exclude 'META-INF/services/*'
+    exclude 'META-INF/*.SF', 'META-INF/*.RSA', 'META-INF/*.DSA'
+    exclude 'module-info.class'
+    exclude 'me/lucko/**'
+}
+
+tasks.named('jar') {
+    // Fold the shaded tree into the dev jar, and let loom remap this jar
+    // into the release artifact.
+    dependsOn tasks.named('shadowJar')
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    from(project.provider { zipTree(tasks.shadowJar.archiveFile) })
+}
+
+tasks.named('remapJar') { task ->
+    // loom 1.8 on Gradle 8.14 registers remapJar's @TaskActions in the wrong
+    // order: the inherited Jar archive action (AbstractCopyTask#copy) runs
+    // after the remap worker and overwrites its output with an empty spec,
+    // leaving a manifest-only jar. Move copy ahead of run.
+    // If you upgrade loom, check that the release jar is not empty; this
+    // block may no longer be needed (or may break).
+    def method = { a ->
+        def f = a.class.declaredFields.find { it.type == java.lang.reflect.Method }
+        f?.setAccessible(true)
+        f ? f.get(a) : null
+    }
+    def actions = task.actions
+    def runIdx = actions.findIndexOf { method(it)?.name == 'run' && method(it).declaringClass.simpleName == 'RemapJarTask' }
+    def copyIdx = actions.findIndexOf { method(it)?.name == 'copy' }
+    if (runIdx >= 0 && copyIdx >= 0 && runIdx < copyIdx) {
+        actions.add(runIdx, actions.remove(copyIdx))
+    }
+}
+
+test {
+    useJUnitPlatform()
+}
