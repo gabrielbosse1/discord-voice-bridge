@@ -37,7 +37,8 @@ Mojang moved to year-based versioning (last 1.x was 1.21.11, then 26.1, 26.2, 26
 ## Build notes
 
 - loom 1.19.3 (plugin id `net.fabricmc.fabric-loom`), Gradle 9.8.2 (wrapper committed), Java 25. No mappings line: 26.3 jars are pre-named with Mojang's official mappings.
-- Versions: JDA 5.5.1, SVC api 2.6.27, SVC fabric jar 2.6.27+26.3, fabric-api 0.165.0+26.3, fabric-loader 0.20.1, fabric-permissions-api 0.7.0, sponge-mixin 0.17.5+mixin.0.8.7 (compileOnly, annotations only; must never end up in the jar).
+- Versions: JDA 5.5.1, SVC api 2.6.27, SVC fabric jar 2.6.27+26.3, fabric-api 0.165.0+26.3 (nested in the release jar so the `fabric` mod dependency is present), fabric-loader 0.20.1, fabric-permissions-api 0.7.0, sponge-mixin 0.17.5+mixin.0.8.7 (compileOnly, annotations only; must never end up in the jar).
+- This artifact targets Minecraft 26.3 only. Cross-version support requires separate compatibility ports/builds because Minecraft, Fabric API, and SVC APIs and Java requirements vary by game version.
 - Build:
 
 ```
