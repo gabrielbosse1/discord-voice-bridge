@@ -19,6 +19,8 @@ Fabric mod for Minecraft 26.3 that bridges Discord voice chat with Simple Voice 
 - Simple Voice Chat for 26.3 (2.6.27+26.3) on the server
 - A Discord bot with the `guild_voice_states` intent (the bot account needs `voice_connect` and `voice_receive`)
 
+The release jar nests the matching Fabric API dependency, so a separate Fabric API install is not required for this version. This release targets **Minecraft 26.3 only**; Minecraft, Fabric API, Java, and Simple Voice Chat APIs change between game versions, so a single jar cannot safely support every Minecraft version. Other versions need their own compatible port/build.
+
 ## Build
 
 Java 25 is required. The Gradle wrapper is committed, so no Gradle install is needed:
