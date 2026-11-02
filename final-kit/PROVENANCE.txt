@@ -1,0 +1,63 @@
+build from committed source on branch arena/07026275-discord-voice-bridge
+commit: f807c6019bdd893c496788ed7cd41aa0862d1e3d
+java:
+openjdk version "25.0.5" 2026-10-20 LTS
+OpenJDK Runtime Environment Temurin-25.0.5+8 (build 25.0.5+8-LTS)
+OpenJDK 64-Bit Server VM Temurin-25.0.5+8 (build 25.0.5+8-LTS, mixed mode, sharing)
+gradle:
+
+------------------------------------------------------------
+Gradle 9.8.2
+------------------------------------------------------------
+
+Build time:    2026-10-19 16:29:26 UTC
+Revision:      8de7bcf76e785507ad92f0741ab9235a430c95e6
+
+Kotlin:        2.4.10
+Groovy:        4.0.33
+Ant:           Apache Ant(TM) version 1.10.17 compiled on April 6 2026
+Launcher JVM:  25.0.5 (Eclipse Adoptium 25.0.5+8-LTS)
+build/libs:
+total 39592
+-rw-r--r-- 1 runner runner 19374182 Nov  2 23:57 discord_voice_bridge-1.0.0-all.jar
+-rw-r--r-- 1 runner runner 21161849 Nov  2 23:57 discord_voice_bridge-1.0.0.jar
+sha256 final jar:
+b55fa1e9bd62da4350e55994a57100396ddc370f9746713ff8669a94457d24f9  final-kit/final-1.0.0.jar
+sha256 installed CI artifact:
+e36df57ab9a46e4adced60c0f438fc53326668062ac0abd9128f965d5b6cecce  arena-kit/installed-ci.jar
+sha256 earlier fixed jar:
+b55fa1e9bd62da4350e55994a57100396ddc370f9746713ff8669a94457d24f9  arena-kit/fixed-1.0.0.jar
+processed resource:
+{
+  "schemaVersion": 1,
+  "id": "discord_voice_bridge",
+  "version": "1.0.0",
+  "name": "Discord Voice Bridge",
+  "description": "Bridges Discord Voice Chat with Simple Voice Chat on a dedicated server.",
+  "authors": [
+    "discordvoicebridge"
+  ],
+  "license": "MIT",
+  "environment": "server",
+  "entrypoints": {
+    "server": [
+      "com.discordvoicebridge.DiscordVoiceBridgeMod"
+    ]
+  },
+  "mixins": [
+    "discord_voice_bridge.mixins.json"
+  ],
+  "depends": {
+    "fabricloader": ">=0.20.1",
+    "fabric-api": ">=0.165.0",
+    "minecraft": "~26.3",
+    "java": ">=25"
+  },
+  "suggests": {
+    "voicechat": "*"
+  }
+}
+jar resource:
+{"schemaVersion":1,"id":"discord_voice_bridge","version":"1.0.0","name":"Discord Voice Bridge","description":"Bridges Discord Voice Chat with Simple Voice Chat on a dedicated server.","authors":["discordvoicebridge"],"license":"MIT","environment":"server","entrypoints":{"server":["com.discordvoicebridge.DiscordVoiceBridgeMod"]},"mixins":["discord_voice_bridge.mixins.json"],"depends":{"fabricloader":"\u003e\u003d0.20.1","fabric-api":"\u003e\u003d0.165.0","minecraft":"~26.3","java":"\u003e\u003d25"},"suggests":{"voicechat":"*"},"jars":[{"file":"META-INF/jars/fabric-api-0.165.0+26.3.jar"},{"file":"META-INF/jars/fabric-permissions-api-0.7.0.jar"}]}nested jars:
+  1778588  1980-01-01 00:00   META-INF/jars/fabric-api-0.165.0+26.3.jar
+    15050  1980-01-01 00:00   META-INF/jars/fabric-permissions-api-0.7.0.jar
