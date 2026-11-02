@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Java 25
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 25
+
+      # Simple Voice Chat is not redistributable with this repo, so CI fetches
+      # the fabric jar from Modrinth. It is only used to compile against
+      # CommonCompatibilityManager and never bundled or republished.
+      - name: Fetch Simple Voice Chat from Modrinth
+        run: |
+          mkdir -p libs
+          curl -fL --retry 3 -o "libs/voicechat-fabric-2.6.27+26.3.jar" \
+            "https://cdn.modrinth.com/data/9eGKb6K1/versions/x9jLR94Q/voicechat-fabric-2.6.27%2B26.3.jar"
+
+      - name: Build and test
+        run: ./gradlew clean test build --no-daemon
+
+      - name: Upload release jar
+        uses: actions/upload-artifact@v4
+        with:
+          name: discord-voice-bridge
+          path: build/libs/discord_voice_bridge-1.0.0.jar

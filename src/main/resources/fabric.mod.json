@@ -9,14 +9,18 @@
   ],
   "license": "MIT",
   "environment": "server",
-  "entrypoints": {},
+  "entrypoints": {
+    "server": [
+      "com.discordvoicebridge.DiscordVoiceBridgeMod"
+    ]
+  },
   "mixins": [
     "discord_voice_bridge.mixins.json"
   ],
   "depends": {
-    "fabricloader": ">=0.16.0",
-    "minecraft": "~1.21.1",
-    "java": ">=21"
+    "fabricloader": ">=0.20.1",
+    "minecraft": "~26.3",
+    "java": ">=25"
   },
   "suggests": {
     "voicechat": "*"

@@ -11,30 +11,30 @@ import com.mojang.brigadier.CommandDispatcher;
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
 import com.mojang.brigadier.context.CommandContext;
 
-import net.minecraft.server.command.CommandManager;
-import net.minecraft.server.command.ServerCommandSource;
-import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.text.ClickEvent;
-import net.minecraft.text.HoverEvent;
-import net.minecraft.text.Style;
-import net.minecraft.text.MutableText;
-import net.minecraft.text.Text;
-import net.minecraft.util.Formatting;
+import net.minecraft.ChatFormatting;
+import net.minecraft.commands.CommandSourceStack;
+import net.minecraft.commands.Commands;
+import net.minecraft.network.chat.ClickEvent;
+import net.minecraft.network.chat.Component;
+import net.minecraft.network.chat.HoverEvent;
+import net.minecraft.network.chat.MutableComponent;
+import net.minecraft.network.chat.Style;
+import net.minecraft.server.level.ServerPlayer;
 
-import static net.minecraft.server.command.CommandManager.literal;
+import static net.minecraft.commands.Commands.literal;
 
 /**
  * /dvc config - admin-only, chat-based configuration panel with clickable,
- * hoverable Text components. No Discord commands exist; all configuration is
+ * hoverable components. No Discord commands exist; all configuration is
  * handled in-game.
  */
 public class ConfigCommand {
 
     private static final String PERMISSION = "discord_voice_bridge.admin";
 
-    public static void register(CommandDispatcher<ServerCommandSource> dispatcher,
-                                CommandManager.RegistrationEnvironment environment) {
-        if (!environment.dedicated) {
+    public static void register(CommandDispatcher<CommandSourceStack> dispatcher,
+                                Commands.CommandSelection selection) {
+        if (selection != Commands.CommandSelection.DEDICATED) {
             return;
         }
         dispatcher.register(literal("dvc")
@@ -50,81 +50,81 @@ public class ConfigCommand {
                                 .executes(ConfigCommand::status))));
     }
 
-    private static int showPanel(CommandContext<ServerCommandSource> ctx) throws CommandSyntaxException {
-        ServerPlayerEntity player = ctx.getSource().getPlayerOrThrow();
+    private static int showPanel(CommandContext<CommandSourceStack> ctx) throws CommandSyntaxException {
+        ServerPlayer player = ctx.getSource().getPlayerOrException();
         DiscordVoiceBridgeConfig cfg = DiscordVoiceBridgeMod.getConfig();
         DiscordBotManager bot = DiscordVoiceBridgeMod.getDiscordBot();
 
-        Text title = Text.literal(Lang.get("discord_voice_bridge.config.title"))
-                .setStyle(Style.EMPTY.withColor(Formatting.GOLD).withBold(true));
-        player.sendMessage(title);
+        Component title = Component.literal(Lang.get("discord_voice_bridge.config.title"))
+                .withStyle(Style.EMPTY.withColor(ChatFormatting.GOLD).withBold(true));
+        player.sendSystemMessage(title);
 
         boolean enabled = cfg.isEnabled();
         String enabledValue = enabled ? Lang.get("discord_voice_bridge.config.enabled_true")
                 : Lang.get("discord_voice_bridge.config.enabled_false");
-        MutableText enabledLine = Text.literal(Lang.get("discord_voice_bridge.config.enabled", enabledValue))
-                .setStyle(Style.EMPTY.withColor(enabled ? Formatting.GREEN : Formatting.RED));
-        Text toggleBtn = button("[toggle]", "/dvc config toggle enabled",
+        MutableComponent enabledLine = Component.literal(Lang.get("discord_voice_bridge.config.enabled", enabledValue))
+                .withStyle(Style.EMPTY.withColor(enabled ? ChatFormatting.GREEN : ChatFormatting.RED));
+        Component toggleBtn = button("[toggle]", "/dvc config toggle enabled",
                 Lang.get("discord_voice_bridge.config.instruction"));
-        player.sendMessage(enabledLine.append(Text.literal(" ")).append(toggleBtn));
+        player.sendSystemMessage(enabledLine.append(Component.literal(" ")).append(toggleBtn));
 
-        Text reloadBtn = button(Lang.get("discord_voice_bridge.config.reload"), "/dvc config reload",
+        Component reloadBtn = button(Lang.get("discord_voice_bridge.config.reload"), "/dvc config reload",
                 Lang.get("discord_voice_bridge.config.instruction"));
-        player.sendMessage(reloadBtn);
+        player.sendSystemMessage(reloadBtn);
 
-        Text statusBtn = button(Lang.get("discord_voice_bridge.config.status"), "/dvc config status",
+        Component statusBtn = button(Lang.get("discord_voice_bridge.config.status"), "/dvc config status",
                 Lang.get("discord_voice_bridge.config.instruction"));
-        player.sendMessage(statusBtn);
+        player.sendSystemMessage(statusBtn);
 
-        player.sendMessage(Text.literal(Lang.get("discord_voice_bridge.config.group_name", cfg.getGroupName())));
-        player.sendMessage(Text.literal(Lang.get("discord_voice_bridge.config.bot_name", cfg.getBotDisplayName())));
-        player.sendMessage(Text.literal(Lang.get("discord_voice_bridge.config.voice_channel",
+        player.sendSystemMessage(Component.literal(Lang.get("discord_voice_bridge.config.group_name", cfg.getGroupName())));
+        player.sendSystemMessage(Component.literal(Lang.get("discord_voice_bridge.config.bot_name", cfg.getBotDisplayName())));
+        player.sendSystemMessage(Component.literal(Lang.get("discord_voice_bridge.config.voice_channel",
                 cfg.getVoiceChannelId() == null || cfg.getVoiceChannelId().isBlank()
                         ? Lang.get("discord_voice_bridge.error.missing_channel") : cfg.getVoiceChannelId())));
 
         String state = bot != null && bot.isRunning()
                 ? Lang.get("discord_voice_bridge.config.status_online")
                 : Lang.get("discord_voice_bridge.config.status_offline");
-        player.sendMessage(Text.literal(state).setStyle(Style.EMPTY.withColor(Formatting.GRAY)));
+        player.sendSystemMessage(Component.literal(state).withStyle(Style.EMPTY.withColor(ChatFormatting.GRAY)));
 
-        player.sendMessage(Text.literal(Lang.get("discord_voice_bridge.config.instruction")));
+        player.sendSystemMessage(Component.literal(Lang.get("discord_voice_bridge.config.instruction")));
         return 1;
     }
 
-    private static int toggleEnabled(CommandContext<ServerCommandSource> ctx) throws CommandSyntaxException {
-        ServerPlayerEntity player = ctx.getSource().getPlayerOrThrow();
+    private static int toggleEnabled(CommandContext<CommandSourceStack> ctx) throws CommandSyntaxException {
+        ServerPlayer player = ctx.getSource().getPlayerOrException();
         DiscordVoiceBridgeMod.toggleEnabled();
         DiscordVoiceBridgeConfig cfg = DiscordVoiceBridgeMod.getConfig();
-        player.sendMessage(Text.literal(
+        player.sendSystemMessage(Component.literal(
                 cfg.isEnabled()
                         ? Lang.get("discord_voice_bridge.config.toggled_on")
                         : Lang.get("discord_voice_bridge.config.toggled_off"))
-                .setStyle(Style.EMPTY.withColor(cfg.isEnabled() ? Formatting.GREEN : Formatting.RED)));
+                .withStyle(Style.EMPTY.withColor(cfg.isEnabled() ? ChatFormatting.GREEN : ChatFormatting.RED)));
         return showPanel(ctx);
     }
 
-    private static int reload(CommandContext<ServerCommandSource> ctx) throws CommandSyntaxException {
-        ServerPlayerEntity player = ctx.getSource().getPlayerOrThrow();
+    private static int reload(CommandContext<CommandSourceStack> ctx) throws CommandSyntaxException {
+        ServerPlayer player = ctx.getSource().getPlayerOrException();
         DiscordVoiceBridgeMod.reloadConfig();
-        player.sendMessage(Text.literal(Lang.get("discord_voice_bridge.config.reloaded"))
-                .setStyle(Style.EMPTY.withColor(Formatting.GREEN)));
+        player.sendSystemMessage(Component.literal(Lang.get("discord_voice_bridge.config.reloaded"))
+                .withStyle(Style.EMPTY.withColor(ChatFormatting.GREEN)));
         return showPanel(ctx);
     }
 
-    private static int status(CommandContext<ServerCommandSource> ctx) throws CommandSyntaxException {
-        ServerPlayerEntity player = ctx.getSource().getPlayerOrThrow();
+    private static int status(CommandContext<CommandSourceStack> ctx) throws CommandSyntaxException {
+        ServerPlayer player = ctx.getSource().getPlayerOrException();
         DiscordBotManager bot = DiscordVoiceBridgeMod.getDiscordBot();
         String state = (bot != null && bot.isRunning())
                 ? Lang.get("discord_voice_bridge.config.status_online")
                 : Lang.get("discord_voice_bridge.config.status_offline");
-        player.sendMessage(Text.literal(state));
+        player.sendSystemMessage(Component.literal(state));
         return showPanel(ctx);
     }
 
-    private static Text button(String label, String command, String hover) {
-        return Text.literal(label)
-                .setStyle(Style.EMPTY.withColor(Formatting.AQUA)
-                        .withClickEvent(new ClickEvent(ClickEvent.Action.RUN_COMMAND, command))
-                        .withHoverEvent(new HoverEvent(HoverEvent.Action.SHOW_TEXT, Text.literal(hover))));
+    private static Component button(String label, String command, String hover) {
+        return Component.literal(label)
+                .withStyle(Style.EMPTY.withColor(ChatFormatting.AQUA)
+                        .withClickEvent(new ClickEvent.RunCommand(command))
+                        .withHoverEvent(new HoverEvent.ShowText(Component.literal(hover))));
     }
 }

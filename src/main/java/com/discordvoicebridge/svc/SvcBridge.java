@@ -20,11 +20,14 @@ import de.maxhenkel.voicechat.intercompatibility.CommonCompatibilityManager;
 
 import net.fabricmc.fabric.api.entity.FakePlayer;
 import net.minecraft.server.MinecraftServer;
-import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.server.world.ServerWorld;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
 
 import com.mojang.authlib.GameProfile;
 import com.mojang.authlib.properties.Property;
+import com.mojang.authlib.properties.PropertyMap;
+
+import com.google.common.collect.ImmutableMultimap;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -41,7 +44,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * <ul>
  *   <li>Creates the persistent group from config, name kept verbatim.</li>
  *   <li>Spawns a {@link FakePlayer} for the bot (custom name + skin URL).
- *       {@code PlayerManagerMixin} keeps it out of the TAB list.</li>
+ *       {@code PlayerListMixin} keeps it out of the TAB list.</li>
  *   <li>Discord -> Minecraft: PCM is Opus-encoded via {@link VoicechatServerApi#createEncoder()}
  *       and sent through an {@link EntityAudioChannel} bound to the fake player, so it sounds
  *       like a real player inside the group.</li>
@@ -100,18 +103,20 @@ public class SvcBridge implements SvcVoicechatPlugin {
         decoder = api.createDecoder();
 
         // --- fake player: custom display name + skin head, positioned at world spawn ---
-        ServerWorld overworld = server.getOverworld();
+        ServerLevel overworld = server.overworld();
         GameProfile profile = new GameProfile(DiscordVoiceBridgeMod.BOT_UUID, config.getBotDisplayName());
         String skinUrl = config.getBotSkinUrl();
         if (skinUrl != null && !skinUrl.isBlank()) {
             String textures = "{\"textures\":{\"SKIN\":{\"url\":\"" + skinUrl + "\"}}}";
-            profile.getProperties().put("textures", new Property("textures",
-                    Base64.getEncoder().encodeToString(textures.getBytes(StandardCharsets.UTF_8))));
+            Property texturesProperty = new Property("textures",
+                    Base64.getEncoder().encodeToString(textures.getBytes(StandardCharsets.UTF_8)));
+            profile = new GameProfile(DiscordVoiceBridgeMod.BOT_UUID, config.getBotDisplayName(),
+                    new PropertyMap(ImmutableMultimap.of("textures", texturesProperty)));
         }
         fakePlayer = FakePlayer.get(overworld, profile);
-        fakePlayer.setPos(overworld.getSpawnPos().getX() + 0.5, overworld.getSpawnPos().getY(),
-                overworld.getSpawnPos().getZ() + 0.5);
-        if (!overworld.spawnEntity(fakePlayer)) {
+        var spawn = overworld.getLevelData().getRespawnData().pos();
+        fakePlayer.setPos(spawn.getX() + 0.5, spawn.getY(), spawn.getZ() + 0.5);
+        if (!overworld.addFreshEntity(fakePlayer)) {
             LOGGER.warn("Fake player could not be spawned into the overworld");
         }
 
@@ -155,11 +160,11 @@ public class SvcBridge implements SvcVoicechatPlugin {
             return;
         }
         Set<UUID> inGroup = new HashSet<>();
-        for (ServerPlayerEntity player : server.getPlayerManager().getPlayerList()) {
-            VoicechatConnection conn = api.getConnectionOf(player.getUuid());
+        for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+            VoicechatConnection conn = api.getConnectionOf(player.getUUID());
             if (conn != null && conn.isInGroup() && conn.getGroup().getId().equals(GROUP_UUID)) {
-                inGroup.add(player.getUuid());
-                ensureListener(player.getUuid());
+                inGroup.add(player.getUUID());
+                ensureListener(player.getUUID());
             }
         }
         listeners.keySet().removeIf(uuid -> {
