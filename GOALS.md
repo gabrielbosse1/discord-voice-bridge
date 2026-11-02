@@ -47,7 +47,7 @@ Not done, in priority order:
   verified against the 26.3 jars, but the bridge has not been run on a real
   26.3 server yet with real Discord audio. That is the next milestone and the
   one that turns "compiles" into "done looks like #3".
-- **Reconnect/robustness story.** The bot starts, stops and reloads; extended
+- **Reconnect behavior.** The bot starts, stops and reloads; extended
   uptime behavior (Discord disconnects, SVC restart, long sessions) is not
   explicitly tested.
 - **Docs for operators.** A short runbook (token setup, intents, common

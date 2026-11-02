@@ -14,7 +14,7 @@
   "discord_voice_bridge.config.reloaded": "Configuração recarregada com sucesso.",
   "discord_voice_bridge.config.reload_failed": "Falha ao recarregar a configuração.",
   "discord_voice_bridge.config.status_online": "Bridge online e conectado ao Discord.",
-  "discord_voice_bridge.config.status_offline": "Bridge off-line ou não conectado.",
+  "discord_voice_bridge.config.status_offline": "Bridge offline ou não conectado.",
   "discord_voice_bridge.config.status_connecting": "Conectando ao Discord...",
   "discord_voice_bridge.config.admin_required": "Apenas administradores podem usar este comando.",
   "discord_voice_bridge.config.unknown_option": "Opção desconhecida.",

@@ -41,9 +41,11 @@ Mojang moved to year-based versioning (last 1.x was 1.21.11, then 26.1, 26.2, 26
 - Build:
 
 ```
-$env:JAVA_HOME="<jdk25>"
-./gradlew clean test build
+$env:JAVA_HOME="<path to a JDK 25>"
+.\gradlew.bat clean test build
 ```
+
+On Linux/macOS: `./gradlew clean test build`.
 
 - The `downloadSvc` task fetches `libs/voicechat-fabric-2.6.27+26.3.jar` from Modrinth. That jar is not redistributable and is gitignored; CI does the same fetch in `.github/workflows/ci.yml`.
 - The release jar must be ~18 MB (shaded JDA tree + nested permissions jar). If it comes back tiny, something broke in the jar/remap wiring: check the `jar` task (folds `shadowJar` output) and the manifest `Fabric-Mapping-Namespace` (must be `official`).

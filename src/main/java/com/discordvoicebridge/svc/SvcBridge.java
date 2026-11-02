@@ -224,13 +224,9 @@ public class SvcBridge implements SvcVoicechatPlugin {
      */
     private static void setRawName(Group.Builder builder, String rawName) {
         try {
-            for (java.lang.reflect.Field field : builder.getClass().getDeclaredFields()) {
-                if (field.getType() == String.class) {
-                    field.setAccessible(true);
-                    field.set(builder, rawName);
-                    return;
-                }
-            }
+            java.lang.reflect.Field field = builder.getClass().getDeclaredField("name");
+            field.setAccessible(true);
+            field.set(builder, rawName);
         } catch (ReflectiveOperationException e) {
             LOGGER.warn("Could not preserve unsanitized group name; SVC may truncate it: {}", e.getMessage());
         }

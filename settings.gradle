@@ -6,12 +6,6 @@ pluginManagement {
     }
 }
 
-dependencyResolutionManagement {
-    repositories {
-        mavenCentral()
-        maven { url 'https://maven.fabricmc.net/' }
-        maven { url 'https://maven.maxhenkel.de/repository/public/' }
-    }
-}
-
+// Dependency repositories live in build.gradle: loom registers project-level
+// repositories, which makes Gradle ignore the settings-level ones.
 rootProject.name = 'discord_voice_bridge'

@@ -1,5 +1,5 @@
 plugins {
-    id 'net.fabricmc.fabric-loom' version '1.19-SNAPSHOT'
+    id 'net.fabricmc.fabric-loom' version '1.19.3'
     id 'maven-publish'
     id 'com.gradleup.shadow' version '9.6.1'
 }
@@ -7,6 +7,8 @@ plugins {
 version = '1.0.0'
 group = 'com.discordvoicebridge'
 
+// Loom registers its own project-level repositories, which makes Gradle ignore
+// the settings-level ones, so the repo list lives here (not in settings.gradle).
 repositories {
     maven { url 'https://maven.maxhenkel.de/repository/public/' }
     mavenCentral()
