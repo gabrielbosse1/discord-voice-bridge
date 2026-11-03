@@ -33,7 +33,7 @@ dependencies {
     minecraft "com.mojang:minecraft:26.3"
     implementation "net.fabricmc:fabric-loader:0.20.1"
     // Keep Fabric API on the compile classpath and nest its aggregate jar in
-    // our release artifact. This makes the declared `fabric` mod dependency
+    // our release artifact. This makes the declared `fabric-api` mod dependency
     // available on a clean Fabric server instead of requiring a separate manual
     // install. Fabric API's aggregate jar contains its module jars.
     implementation "net.fabricmc.fabric-api:fabric-api:0.165.0+26.3"
@@ -96,11 +96,64 @@ shadowJar {
 }
 
 tasks.named('jar') {
-    // Fold the shaded tree into the dev jar, and let loom remap this jar
-    // into the release artifact.
+    // Ship the shaded tree (shadowJar) as the dev jar and let loom remap it
+    // into the release artifact (adds the nested `include` mod jars and the
+    // Fabric manifest).
     dependsOn tasks.named('shadowJar')
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
     from(project.provider { zipTree(tasks.shadowJar.archiveFile) })
+    // loom's remap/manifest step has now finished by the time this runs. Our
+    // mod classes entered the dev jar from sourceSets.main.output, where they
+    // still reference the original `net.dv8tion.jda` package; the shaded tree
+    // ships JDA under `discordvoicebridge.jda`, so those references dangle and
+    // the release jar crashes on boot (NoClassDefFoundError: net/dv8tion/jda/...).
+    // The shadowJar holds the same classes with the JDA references rewritten to
+    // the relocated package, so overwrite the mod classes with those copies.
+    doLast {
+        def releaseJar = archiveFile.get().asFile
+        // shadowJar's default classifier is `all`, so its output sits next to the
+        // release jar as <name>-version-all.jar.
+        def shadedJar = new File(releaseJar.parentFile, releaseJar.name.replace('.jar', '-all.jar'))
+        if (!shadedJar.exists()) {
+            throw new GradleException("expected shaded jar ${shadedJar} (run shadowJar first)")
+        }
+
+        // Collect the relocated mod classes from the shaded jar.
+        def relocated = new LinkedHashMap<String, byte[]>()
+        new java.util.zip.ZipFile(shadedJar).withCloseable { zf ->
+            zf.entries().each { e ->
+                if (e.name.startsWith('com/discordvoicebridge/') && e.name.endsWith('.class')) {
+                    def baos = new ByteArrayOutputStream()
+                    zf.getInputStream(e).withCloseable { ins -> ins.transferTo(baos) }
+                    relocated[e.name] = baos.toByteArray()
+                }
+            }
+        }
+        if (relocated.isEmpty()) {
+            throw new GradleException("shadowJar ${shadedJar.name} has no com/discordvoicebridge classes; refusing to ship an unrelocated release jar")
+        }
+
+        // Rewrite the release jar, substituting the relocated class bytes.
+        def tmp = new File(releaseJar.parentFile, releaseJar.name + '.fixed')
+        new java.util.zip.ZipFile(releaseJar).withCloseable { src ->
+            new java.util.zip.ZipOutputStream(new FileOutputStream(tmp)).withCloseable { zos ->
+                src.entries().each { e ->
+                    def ze = new java.util.zip.ZipEntry(e.name)
+                    zos.putNextEntry(ze)
+                    if (relocated.containsKey(e.name)) {
+                        zos.write(relocated[e.name])
+                    } else if (!e.directory) {
+                        src.getInputStream(e).withCloseable { ins -> ins.transferTo(zos) }
+                    }
+                    zos.closeEntry()
+                }
+            }
+        }
+        // replace is more reliable than renameTo on Windows.
+        java.nio.file.Files.copy(tmp.toPath(), releaseJar.toPath(),
+                java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+        tmp.delete()
+    }
 }
 
 test {
