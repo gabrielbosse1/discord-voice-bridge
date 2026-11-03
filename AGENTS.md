@@ -18,9 +18,8 @@ Mojang moved to year-based versioning (last 1.x was 1.21.11, then 26.1, 26.2, 26
 
 - `DiscordVoiceBridgeMod` - `DedicatedServerModInitializer`. Registers the command callback and `SERVER_STARTED`/`SERVER_STOPPING` lifecycle events. Holds config, bot and SVC plugin singletons; `applyConfig`/`toggleEnabled`/`reloadConfig` wire the admin panel to the live connection.
 - `DiscordBotManager` - JDA 5.5.1. `start()` is non-blocking (JDA has no ready callback, only blocking `awaitReady()`), the wait and channel connect run on a daemon thread. `playToDiscord(short[])` is the MC to Discord entry point.
-- `SvcBridge` - persistent group, fake player with name + skin, `EntityAudioChannel` for Discord to MC audio, one `PlayerAudioListener` per in-group player for MC to Discord audio.
+- `SvcBridge` - persistent group, `LocationalAudioChannel` at the world spawn for Discord to MC audio (a positional audio stream, no fake player), one `PlayerAudioListener` per in-group player for MC to Discord audio.
 - `SvcVoicechatPlugin` - interface so the SVC side only loads when SVC is present (loaded reflectively, so the mod never hard-depends on SVC classes).
-- `PlayerListMixin` - TAB hiding: cancels `placeNewPlayer` for the bot UUID so it can never reach the player info packet.
 - `ConfigCommand` - `/dvc config` panel (record-based `ClickEvent.RunCommand` / `HoverEvent.ShowText` on 26.3), permission checked with `Permissions.require`.
 - `AudioPipeline` - stereo/mono conversion, JDA frame packing, bounded send queue.
 - `Lang` - `{0}`-style key resolution, pt_br first, en_us fallback.
@@ -28,9 +27,8 @@ Mojang moved to year-based versioning (last 1.x was 1.21.11, then 26.1, 26.2, 26
 
 ## Why things are the way they are
 
-- `AudioSender` instead of the spec's direct send: it only routes for players connected to SVC voice, a bot UUID is dropped. `EntityAudioChannel` on the fake player is the public-API equivalent.
+- Discord to MC audio uses a `LocationalAudioChannel` at the spawn point instead of `AudioSender.send()`: `AudioSender` only routes for players connected to SVC voice, a bot UUID is dropped. A locational channel is the public-API equivalent — and because it is not a player, there is no TAB entry and no sleep-count entry to hide (the old fake player needed a TAB mixin and a sleep-count mixin for exactly that).
 - `PlayerAudioListener` per player: `MicrophonePacket` has no sender in the public API.
-- The TAB mixin targets `PlayerList.placeNewPlayer` because that is where the 26.3 join path builds the `ClientboundPlayerInfoUpdatePacket` ADD_PLAYER entry.
 - Lifecycle uses `ServerLifecycleEvents` instead of mixin injection into `MinecraftServer`: with loom 1.19 the `DedicatedServerModInitializer` entrypoint compiles normally, so the old `MinecraftServerMixin` was deleted when porting to 26.3.
 - 26.3 specifics that will bite when editing: `GameProfile` is an immutable record (skin goes in via a third `PropertyMap` constructor arg), `ChatFormatting` lives in `net.minecraft.ChatFormatting`, `ChatEvent`/`HoverEvent` are interfaces with record implementations, `Level` no longer has `spawnEntity` (use `ServerLevel.addFreshEntity`), and the respawn point is `getLevelData().getRespawnData().pos()`.
 

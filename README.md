@@ -8,9 +8,9 @@ Fabric mod for Minecraft 26.3 that bridges Discord voice chat with Simple Voice 
 
 - On server start, launches a headless JDA bot from the config (`token`, `voice_channel_id`) and joins the configured Discord voice channel.
 - Creates a persistent SVC group with the configured name, kept verbatim: spaces, symbols, emojis, Unicode, no trimming.
-- Relays audio Discord to Minecraft: the Discord PCM is downmixed to mono, Opus-encoded with the SVC API, and played through an `EntityAudioChannel` bound to a `FakePlayer`, so it sounds like a real player in the group. Display name and skin head come from the config.
+- Relays audio Discord to Minecraft: the Discord PCM is downmixed to mono, Opus-encoded with the SVC API, and played through a `LocationalAudioChannel` at the world spawn point — a positional audio stream, not a player.
 - Relays audio Minecraft to Discord: mic packets from group members are decoded to PCM and sent to the Discord voice channel.
-- The bot does not show up in the TAB player list: `PlayerListMixin` cancels the bot's UUID in the player join path, and the fake player is only spawned as a world entity, never added to `PlayerList`.
+- The bot is not a player at all: no fake player entity, nothing in the TAB list, nothing in the sleep player count.
 - Configuration is done in-game with `/dvc config`, a clickable chat panel.
 
 ## Requirements
@@ -53,8 +53,6 @@ Then connect a client to the server, join the Discord voice channel from another
 | `token` | string | `""` | Discord bot token |
 | `voiceChannelId` | string | `""` | Discord voice channel to join |
 | `groupName` | string | `"Discord Voice Bridge"` | SVC group name, verbatim |
-| `botDisplayName` | string | `"Discord Bot"` | In-game name of the bot player |
-| `botSkinUrl` | string | `""` | Skin URL for the bot player (Mojang signed URLs) |
 | `groupType` | string | `"NORMAL"` | `NORMAL` or `ISOLATED` |
 | `groupPassword` | string | `""` | Password to join the group; empty = no password |
 | `enabled` | boolean | `true` | Start the bridge on server boot |
@@ -85,9 +83,8 @@ User-facing strings all go through translation keys. `pt_br.json` is the default
 
 ## Design notes
 
-- Discord to Minecraft uses an `EntityAudioChannel` on the fake player instead of `AudioSender.send()`: `AudioSender` only routes audio for players actually connected to SVC voice, so a bot UUID gets dropped. The entity channel gives the same "real player" result with positional audio, using only public API.
+- Discord to Minecraft uses a `LocationalAudioChannel` at the spawn point instead of `AudioSender.send()`: `AudioSender` only routes audio for players actually connected to SVC voice, so a bot UUID gets dropped. The locational channel gives the same result with positional audio, using only public API — and since it is not a player, there is no TAB entry and no sleep-count entry to hide.
 - SVC's `Group.Builder.setName()` runs the name through `convertGroupName`, which trims and truncates to 16 characters. `SvcBridge#setRawName` writes the raw name into the builder right before `build()`; that is the only reflection in the mod. Everything else stays on the public `de.maxhenkel.voicechat.api` surface, no access transformers.
-- TAB hiding: `PlayerListMixin` injects at `PlayerList.placeNewPlayer` (the 26.3 join path) and cancels it for the bot UUID. The fake player is also never registered in `PlayerList`, so this is covered twice.
 - MC to Discord: one `PlayerAudioListener` per player in the group, refreshed every tick. `MicrophonePacket` has no sender accessor in the public API, so the listener is registered per UUID and the group membership is checked inside the callback.
 
 The mod only reads and writes public SVC API state, so it does not conflict with SVC addons like voice-chat-interaction, replay-voice-chat, enhanced-groups or voicechat-names.

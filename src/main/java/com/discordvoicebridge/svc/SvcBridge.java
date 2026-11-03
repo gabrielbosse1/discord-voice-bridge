@@ -8,9 +8,10 @@ import com.discordvoicebridge.discord.DiscordBotManager;
 
 import de.maxhenkel.voicechat.api.Group;
 import de.maxhenkel.voicechat.api.Group.Type;
+import de.maxhenkel.voicechat.api.Position;
 import de.maxhenkel.voicechat.api.VoicechatConnection;
 import de.maxhenkel.voicechat.api.VoicechatServerApi;
-import de.maxhenkel.voicechat.api.audiochannel.EntityAudioChannel;
+import de.maxhenkel.voicechat.api.audiochannel.LocationalAudioChannel;
 import de.maxhenkel.voicechat.api.audiolistener.PlayerAudioListener;
 import de.maxhenkel.voicechat.api.opus.OpusDecoder;
 import de.maxhenkel.voicechat.api.opus.OpusEncoder;
@@ -18,22 +19,14 @@ import de.maxhenkel.voicechat.api.packets.MicrophonePacket;
 import de.maxhenkel.voicechat.api.packets.SoundPacket;
 import de.maxhenkel.voicechat.intercompatibility.CommonCompatibilityManager;
 
-import net.fabricmc.fabric.api.entity.FakePlayer;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
-
-import com.mojang.authlib.GameProfile;
-import com.mojang.authlib.properties.Property;
-import com.mojang.authlib.properties.PropertyMap;
-
-import com.google.common.collect.ImmutableMultimap;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.nio.charset.StandardCharsets;
-import java.util.Base64;
 import java.util.HashSet;
 import java.util.Set;
 import java.util.UUID;
@@ -43,11 +36,10 @@ import java.util.concurrent.ConcurrentHashMap;
  * Simple Voice Chat side of the bridge.
  * <ul>
  *   <li>Creates the persistent group from config, name kept verbatim.</li>
- *   <li>Spawns a {@link FakePlayer} for the bot (custom name + skin URL).
- *       {@code PlayerListMixin} keeps it out of the TAB list.</li>
  *   <li>Discord -> Minecraft: PCM is Opus-encoded via {@link VoicechatServerApi#createEncoder()}
- *       and sent through an {@link EntityAudioChannel} bound to the fake player, so it sounds
- *       like a real player inside the group.</li>
+ *       and sent through a {@link LocationalAudioChannel} at the world spawn point. It is a
+ *       plain positional audio stream, not a player: no fake player entity, no TAB entry,
+ *       no sleep-count inflation, nothing to hide.</li>
  *   <li>Minecraft -> Discord: {@link PlayerAudioListener}s decode group members' Opus mic
  *       packets to PCM and hand them to the Discord bot.</li>
  * </ul>
@@ -64,10 +56,9 @@ public class SvcBridge implements SvcVoicechatPlugin {
     private final DiscordVoiceBridgeConfig config;
     private VoicechatServerApi api;
     private Group botGroup;
-    private EntityAudioChannel channel;
+    private LocationalAudioChannel channel;
     private OpusEncoder encoder;
     private OpusDecoder decoder;
-    private FakePlayer fakePlayer;
     private final ConcurrentHashMap<UUID, PlayerAudioListener> listeners = new ConcurrentHashMap<>();
 
     public SvcBridge(DiscordVoiceBridgeConfig config) {
@@ -116,26 +107,11 @@ public class SvcBridge implements SvcVoicechatPlugin {
         encoder = api.createEncoder();
         decoder = api.createDecoder();
 
-        // --- fake player: custom display name + skin head, positioned at world spawn ---
+        // --- Discord -> Minecraft audio: locational stream at the spawn point, no player ---
         ServerLevel overworld = server.overworld();
-        GameProfile profile = new GameProfile(DiscordVoiceBridgeMod.BOT_UUID, config.getBotDisplayName());
-        String skinUrl = config.getBotSkinUrl();
-        if (skinUrl != null && !skinUrl.isBlank()) {
-            String textures = "{\"textures\":{\"SKIN\":{\"url\":\"" + skinUrl + "\"}}}";
-            Property texturesProperty = new Property("textures",
-                    Base64.getEncoder().encodeToString(textures.getBytes(StandardCharsets.UTF_8)));
-            profile = new GameProfile(DiscordVoiceBridgeMod.BOT_UUID, config.getBotDisplayName(),
-                    new PropertyMap(ImmutableMultimap.of("textures", texturesProperty)));
-        }
-        fakePlayer = FakePlayer.get(overworld, profile);
         var spawn = overworld.getLevelData().getRespawnData().pos();
-        fakePlayer.setPos(spawn.getX() + 0.5, spawn.getY(), spawn.getZ() + 0.5);
-        if (!overworld.addFreshEntity(fakePlayer)) {
-            LOGGER.warn("Fake player could not be spawned into the overworld");
-        }
-
-        // --- Discord -> Minecraft audio channel (positional, like a real player) ---
-        channel = api.createEntityAudioChannel(CHANNEL_UUID, api.fromEntity(fakePlayer));
+        Position position = api.createPosition(spawn.getX() + 0.5, spawn.getY(), spawn.getZ() + 0.5);
+        channel = api.createLocationalAudioChannel(CHANNEL_UUID, api.fromServerLevel(overworld), position);
         if (botGroup.getType() == Type.ISOLATED) {
             channel.setFilter(player -> {
                 VoicechatConnection conn = api.getConnectionOf(player);
@@ -162,10 +138,7 @@ public class SvcBridge implements SvcVoicechatPlugin {
             }
         }
         listeners.clear();
-        if (fakePlayer != null) {
-            fakePlayer.discard();
-            fakePlayer = null;
-        }
+        channel = null;
     }
 
     @Override

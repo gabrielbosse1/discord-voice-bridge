@@ -83,7 +83,6 @@ public class ConfigCommand {
         player.sendSystemMessage(statusBtn);
 
         player.sendSystemMessage(Component.literal(Lang.get("discord_voice_bridge.config.group_name", cfg.getGroupName())));
-        player.sendSystemMessage(Component.literal(Lang.get("discord_voice_bridge.config.bot_name", cfg.getBotDisplayName())));
         player.sendSystemMessage(Component.literal(Lang.get("discord_voice_bridge.config.voice_channel",
                 cfg.getVoiceChannelId() == null || cfg.getVoiceChannelId().isBlank()
                         ? Lang.get("discord_voice_bridge.error.missing_channel") : cfg.getVoiceChannelId())));

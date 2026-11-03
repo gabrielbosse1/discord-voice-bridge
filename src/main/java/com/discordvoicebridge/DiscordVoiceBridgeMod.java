@@ -18,7 +18,6 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.UUID;
 
 /**
  * Main mod class. Server-side only, so the entry point is
@@ -37,9 +36,6 @@ public class DiscordVoiceBridgeMod implements DedicatedServerModInitializer {
 
     public static final String MOD_ID = "discord_voice_bridge";
     public static final Logger LOGGER = LoggerFactory.getLogger(MOD_ID);
-
-    /** Stable UUID of the bridge bot. Used by the TAB-mixin and the fake player. */
-    public static final UUID BOT_UUID = UUID.nameUUIDFromBytes("discord_voice_bridge:bot".getBytes(StandardCharsets.UTF_8));
 
     private static DiscordVoiceBridgeConfig config;
     private static DiscordBotManager discordBot;
@@ -145,8 +141,6 @@ public class DiscordVoiceBridgeMod implements DedicatedServerModInitializer {
                     Lang.get("discord_voice_bridge.config_readme.token"),
                     Lang.get("discord_voice_bridge.config_readme.voiceChannelId"),
                     Lang.get("discord_voice_bridge.config_readme.groupName"),
-                    Lang.get("discord_voice_bridge.config_readme.botDisplayName"),
-                    Lang.get("discord_voice_bridge.config_readme.botSkinUrl"),
                     Lang.get("discord_voice_bridge.config_readme.groupType"),
                     Lang.get("discord_voice_bridge.config_readme.groupPassword"),
                     Lang.get("discord_voice_bridge.config_readme.enabled"),

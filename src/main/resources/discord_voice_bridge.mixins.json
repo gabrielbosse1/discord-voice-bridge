@@ -3,10 +3,7 @@
   "minVersion": "0.8",
   "package": "com.discordvoicebridge.mixin",
   "compatibilityLevel": "JAVA_25",
-  "mixins": [
-    "PlayerListMixin",
-    "SleepStatusMixin"
-  ],
+  "mixins": [],
   "injectors": {
     "defaultRequire": 1
   }
