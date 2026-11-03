@@ -26,6 +26,7 @@ class DiscordVoiceBridgeConfigTest {
         cfg.setBotDisplayName("Bridge Bot");
         cfg.setBotSkinUrl("https://example.com/skin.png");
         cfg.setGroupType("ISOLATED");
+        cfg.setGroupPassword("secret");
         cfg.setEnabled(false);
         cfg.save();
 
@@ -37,6 +38,7 @@ class DiscordVoiceBridgeConfigTest {
         assertEquals("Bridge Bot", reloaded.getBotDisplayName());
         assertEquals("https://example.com/skin.png", reloaded.getBotSkinUrl());
         assertEquals("ISOLATED", reloaded.getGroupType());
+        assertEquals("secret", reloaded.getGroupPassword());
         assertFalse(reloaded.isEnabled());
     }
 

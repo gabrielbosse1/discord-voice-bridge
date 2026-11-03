@@ -14,7 +14,9 @@ import net.minecraft.server.MinecraftServer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.UUID;
 
@@ -64,6 +66,7 @@ public class DiscordVoiceBridgeMod implements DedicatedServerModInitializer {
         Path configDir = server.getServerDirectory().resolve("config").resolve(MOD_ID);
         config = new DiscordVoiceBridgeConfig(configDir.resolve("discord_voice_bridge.json"));
         config.load();
+        writeConfigReadme(configDir);
 
         discordBot = new DiscordBotManager(config);
 
@@ -120,6 +123,40 @@ public class DiscordVoiceBridgeMod implements DedicatedServerModInitializer {
             }
         } else {
             discordBot.stop();
+        }
+    }
+
+    /**
+     * Writes the config README next to the JSON on first creation so every
+     * option is documented in the language of the server. The README is
+     * localized through {@link Lang} (pt_br default, en_us fallback).
+     */
+    static void writeConfigReadme(Path configDir) {
+        try {
+            Path readme = configDir.resolve("README.md");
+            if (Files.exists(readme)) {
+                return;
+            }
+            String[] lines = {
+                    "# Discord Voice Bridge - config",
+                    "",
+                    Lang.get("discord_voice_bridge.config_readme.intro"),
+                    "",
+                    Lang.get("discord_voice_bridge.config_readme.token"),
+                    Lang.get("discord_voice_bridge.config_readme.voiceChannelId"),
+                    Lang.get("discord_voice_bridge.config_readme.groupName"),
+                    Lang.get("discord_voice_bridge.config_readme.botDisplayName"),
+                    Lang.get("discord_voice_bridge.config_readme.botSkinUrl"),
+                    Lang.get("discord_voice_bridge.config_readme.groupType"),
+                    Lang.get("discord_voice_bridge.config_readme.groupPassword"),
+                    Lang.get("discord_voice_bridge.config_readme.enabled"),
+                    "",
+                    Lang.get("discord_voice_bridge.config_readme.reload"),
+            };
+            Files.createDirectories(configDir);
+            Files.writeString(readme, String.join(System.lineSeparator(), lines), StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            LOGGER.warn("Could not write config README: {}", e.getMessage());
         }
     }
 

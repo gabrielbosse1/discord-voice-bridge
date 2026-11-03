@@ -20,6 +20,7 @@ import net.minecraft.network.chat.HoverEvent;
 import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.network.chat.Style;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.server.permissions.PermissionLevel;
 
 import static net.minecraft.commands.Commands.literal;
 
@@ -37,8 +38,13 @@ public class ConfigCommand {
         if (selection != Commands.CommandSelection.DEDICATED) {
             return;
         }
+        // PermissionLevel.OWNERS (4) = the default /op level. Without the level
+        // fallback, require(PERMISSION) denies EVERYONE on servers without a
+        // permission provider (no LuckPerms), and Brigadier then hides the
+        // command entirely, so it looks "unknown" even for OPs.
         dispatcher.register(literal("dvc")
-                .requires(Permissions.require(PERMISSION))
+                .requires(Permissions.require(PERMISSION, PermissionLevel.OWNERS))
+                .executes(ConfigCommand::showPanel)
                 .then(literal("config")
                         .executes(ConfigCommand::showPanel)
                         .then(literal("toggle")
@@ -81,6 +87,8 @@ public class ConfigCommand {
         player.sendSystemMessage(Component.literal(Lang.get("discord_voice_bridge.config.voice_channel",
                 cfg.getVoiceChannelId() == null || cfg.getVoiceChannelId().isBlank()
                         ? Lang.get("discord_voice_bridge.error.missing_channel") : cfg.getVoiceChannelId())));
+        player.sendSystemMessage(Component.literal(Lang.get("discord_voice_bridge.config.file", cfg.getPath()))
+                .withStyle(Style.EMPTY.withColor(ChatFormatting.GRAY)));
 
         String state = bot != null && bot.isRunning()
                 ? Lang.get("discord_voice_bridge.config.status_online")

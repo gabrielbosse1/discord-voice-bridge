@@ -46,23 +46,24 @@ Then connect a client to the server, join the Discord voice channel from another
 
 ## Configuration
 
-`config/discord_voice_bridge/discord_voice_bridge.json`, created with defaults on first run.
+`config/discord_voice_bridge/discord_voice_bridge.json`, created with defaults on first run. A `README.md` describing every option in the server's language is written next to it on first creation.
 
 | Key | Type | Default | Meaning |
 |-----|------|---------|---------|
 | `token` | string | `""` | Discord bot token |
-| `voice_channel_id` | string | `""` | Discord voice channel to join |
-| `group_name` | string | `"Discord Voice Bridge"` | SVC group name, verbatim |
-| `bot_display_name` | string | `"Discord Bot"` | In-game name of the bot player |
-| `bot_skin_url` | string | `""` | Skin URL for the bot player (Mojang signed URLs) |
-| `group_type` | string | `"NORMAL"` | `NORMAL` or `ISOLATED` |
+| `voiceChannelId` | string | `""` | Discord voice channel to join |
+| `groupName` | string | `"Discord Voice Bridge"` | SVC group name, verbatim |
+| `botDisplayName` | string | `"Discord Bot"` | In-game name of the bot player |
+| `botSkinUrl` | string | `""` | Skin URL for the bot player (Mojang signed URLs) |
+| `groupType` | string | `"NORMAL"` | `NORMAL` or `ISOLATED` |
+| `groupPassword` | string | `""` | Password to join the group; empty = no password |
 | `enabled` | boolean | `true` | Start the bridge on server boot |
 
 Edit the file while the server runs and `/dvc config reload`, or just restart.
 
 ## Commands
 
-`/dvc config` is admin only (permission `discord_voice_bridge.admin` via fabric-permissions-api, or op level 4). It opens a clickable panel to toggle the bridge, reload the config, and check the status (group name, bot name, channel, connection state).
+`/dvc` (or `/dvc config`) is admin only (permission `discord_voice_bridge.admin` via fabric-permissions-api, or op level 4). It opens a clickable panel to toggle the bridge, reload the config, and check the status (group name, bot name, channel, connection state).
 
 User-facing strings all go through translation keys. `pt_br.json` is the default, `en_us.json` the fallback.
 

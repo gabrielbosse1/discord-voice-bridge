@@ -83,20 +83,34 @@ public class SvcBridge implements SvcVoicechatPlugin {
         }
 
         // --- persistent group (created once, then reused across restarts) ---
+        String password = config.getGroupPassword();
+        boolean wantsPassword = password != null && !password.isBlank();
         botGroup = api.getGroups().stream()
                 .filter(g -> g.getId().equals(GROUP_UUID))
                 .findFirst().orElse(null);
+        // hasPassword() is a null check, not an empty check: setPassword("") would
+        // lock the group behind a blank password, so only pass a password when set.
+        if (botGroup != null && botGroup.hasPassword() != wantsPassword) {
+            // Old build created the group with a blank password; drop it and
+            // recreate with the configured password state.
+            LOGGER.info("Recreating SVC group {} to apply the configured password", GROUP_UUID);
+            api.removeGroup(GROUP_UUID);
+            botGroup = null;
+        }
         if (botGroup == null) {
             Type type = "ISOLATED".equalsIgnoreCase(config.getGroupType()) ? Type.ISOLATED : Type.NORMAL;
             Group.Builder builder = api.groupBuilder()
                     .setId(GROUP_UUID)
                     .setName(config.getGroupName())
-                    .setPassword("")
                     .setPersistent(true)
                     .setType(type);
+            if (wantsPassword) {
+                builder.setPassword(password);
+            }
             setRawName(builder, config.getGroupName());
             botGroup = builder.build();
-            LOGGER.info("Created SVC group {} (id={}, type={})", config.getGroupName(), GROUP_UUID, type);
+            LOGGER.info("Created SVC group {} (id={}, type={}, password={})",
+                    config.getGroupName(), GROUP_UUID, type, wantsPassword);
         }
 
         encoder = api.createEncoder();

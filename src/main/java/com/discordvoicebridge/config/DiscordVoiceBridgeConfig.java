@@ -36,6 +36,7 @@ public class DiscordVoiceBridgeConfig {
     private String botDisplayName = "Discord Bot";
     private String botSkinUrl = "";
     private String groupType = "NORMAL"; // NORMAL | ISOLATED
+    private String groupPassword = ""; // empty = no password (public group)
     private boolean enabled = true;
 
     public DiscordVoiceBridgeConfig(Path configPath) {
@@ -47,7 +48,6 @@ public class DiscordVoiceBridgeConfig {
         try {
             if (!Files.exists(configPath)) {
                 save(); // create defaults
-                return;
             }
             String json = Files.readString(configPath, StandardCharsets.UTF_8);
             DiscordVoiceBridgeConfig parsed = GSON.fromJson(json, DiscordVoiceBridgeConfig.class);
@@ -60,6 +60,7 @@ public class DiscordVoiceBridgeConfig {
             this.botDisplayName = parsed.botDisplayName == null ? "Discord Bot" : parsed.botDisplayName;
             this.botSkinUrl = parsed.botSkinUrl == null ? "" : parsed.botSkinUrl;
             this.groupType = parsed.groupType == null ? "NORMAL" : parsed.groupType;
+            this.groupPassword = parsed.groupPassword == null ? "" : parsed.groupPassword;
             this.enabled = parsed.enabled;
             LOGGER.info("Loaded configuration from {}", configPath);
         } catch (JsonSyntaxException | IOException e) {
@@ -142,6 +143,21 @@ public class DiscordVoiceBridgeConfig {
     public void setGroupType(String groupType) {
         lock.writeLock().lock();
         try { this.groupType = groupType; } finally { lock.writeLock().unlock(); }
+    }
+
+    /** Absolute path of the JSON file, for display in the admin panel. */
+    public String getPath() {
+        return configPath.toString();
+    }
+
+    public String getGroupPassword() {
+        lock.readLock().lock();
+        try { return groupPassword; } finally { lock.readLock().unlock(); }
+    }
+
+    public void setGroupPassword(String groupPassword) {
+        lock.writeLock().lock();
+        try { this.groupPassword = groupPassword; } finally { lock.writeLock().unlock(); }
     }
 
     public boolean isEnabled() {
