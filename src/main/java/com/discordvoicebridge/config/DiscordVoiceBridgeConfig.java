@@ -23,8 +23,11 @@ public class DiscordVoiceBridgeConfig {
     private static final Logger LOGGER = LoggerFactory.getLogger("discord_voice_bridge");
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 
-    private final Path configPath;
-    private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock();
+    // transient: Gson must not try to (de)serialize these. Reflecting into
+    // ReentrantReadWriteLock/Path fails under Java 25's module system and
+    // crashed the server on first save() with a JsonIOException.
+    private final transient Path configPath;
+    private final transient ReentrantReadWriteLock lock = new ReentrantReadWriteLock();
 
     // ----- configuration keys (English, never localized) -----
     private String token = "";

@@ -80,7 +80,13 @@ public class DiscordVoiceBridgeMod implements DedicatedServerModInitializer {
             LOGGER.error("Failed to initialize Simple Voice Chat bridge", t);
         }
 
-        ServerTickEvents.END_SERVER_TICK.register(event -> svcPlugin.refreshPlayers(server));
+        // svcPlugin is null when Simple Voice Chat is absent (or its bootstrap
+        // failed above); refreshing then would NPE every tick and crash the server.
+        ServerTickEvents.END_SERVER_TICK.register(event -> {
+            if (svcPlugin != null) {
+                svcPlugin.refreshPlayers(server);
+            }
+        });
 
         if (config.isEnabled()) {
             discordBot.start();
