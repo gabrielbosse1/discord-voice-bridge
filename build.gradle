@@ -49,15 +49,29 @@ dependencies {
     compileOnly "de.maxhenkel.voicechat:voicechat-api:2.6.27"
     implementation files("libs/voicechat-fabric-2.6.27+26.3.jar")
 
-    // JDA (5.x, includes opus-java native) + admin permission API.
-    implementation "net.dv8tion:JDA:5.5.1"
+    // JDA 6.x (includes opus-java native) + admin permission API.
+    // 6.7.0 is required for two platform-mandated features: E2EE/DAVE encrypted
+    // voice (Discord now closes legacy voice with "E2EE/DAVE protocol required")
+    // and channel obfuscation (mandatory for bots from 2026-11-16).
+    implementation "net.dv8tion:JDA:6.7.0"
+    // jdave = Java bindings for Discord's libdave (the E2EE/DAVE voice protocol).
+    // jdave-api is the Java side; the jdave-native-* jars carry the platform
+    // libdave binary loaded via the classpath (natives/{os}/{arch}/dave.{ext}).
+    implementation "club.minnced:jdave-api:0.1.8"
     implementation "me.lucko:fabric-permissions-api:0.7.0"
     include "me.lucko:fabric-permissions-api:0.7.0"
 
     testImplementation "org.junit.jupiter:junit-jupiter:5.11.4"
     testRuntimeOnly "org.junit.platform:junit-platform-launcher"
     testImplementation "de.maxhenkel.voicechat:voicechat-api:2.6.27"
-    shadowRuntime "net.dv8tion:JDA:5.5.1"
+    shadowRuntime "net.dv8tion:JDA:6.7.0"
+    // Bundle the DAVE interop API and every platform's native libdave so the
+    // release jar works on any server OS/arch.
+    shadowRuntime "club.minnced:jdave-api:0.1.8"
+    shadowRuntime "club.minnced:jdave-native-win-x86-64:0.1.8"
+    shadowRuntime "club.minnced:jdave-native-linux-x86-64:0.1.8"
+    shadowRuntime "club.minnced:jdave-native-linux-aarch64:0.1.8"
+    shadowRuntime "club.minnced:jdave-native-darwin:0.1.8"
 }
 
 tasks.withType(JavaCompile).configureEach {
@@ -80,10 +94,17 @@ tasks.named('processResources') {
 shadowJar {
     configurations = [project.configurations.shadowRuntime]
     relocate 'net.dv8tion.jda', 'discordvoicebridge.jda'
+    // jdave (libdave bindings) and opus-java both live under club.minnced.
+    // The specific jdave prefix goes first so each lands in its own namespace.
+    relocate 'club.minnced.discord', 'discordvoicebridge.shaded.jdave'
     relocate 'club.minnced', 'discordvoicebridge.shaded.opusjava'
     relocate 'com.neovisionaries', 'discordvoicebridge.shaded.neovisionaries'
     relocate 'okhttp3', 'discordvoicebridge.shaded.okhttp'
     relocate 'okio', 'discordvoicebridge.shaded.okio'
+    // JDA 6.x moved to OkHttp 5 (Kotlin): shade the Kotlin runtime so it
+    // cannot collide with other mods.
+    relocate 'kotlin', 'discordvoicebridge.shaded.kotlin'
+    relocate 'org.jetbrains', 'discordvoicebridge.shaded.jetbrains'
     relocate 'com.fasterxml.jackson', 'discordvoicebridge.shaded.jackson'
     relocate 'org.apache.commons.collections4', 'discordvoicebridge.shaded.commons-collections4'
     relocate 'net.sf.trove4j', 'discordvoicebridge.shaded.trove4j'

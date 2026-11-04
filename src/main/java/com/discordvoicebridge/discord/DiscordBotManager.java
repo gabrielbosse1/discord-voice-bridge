@@ -6,6 +6,7 @@ import com.discordvoicebridge.config.DiscordVoiceBridgeConfig;
 
 import net.dv8tion.jda.api.JDA;
 import net.dv8tion.jda.api.JDABuilder;
+import net.dv8tion.jda.api.audio.AudioModuleConfig;
 import net.dv8tion.jda.api.audio.AudioReceiveHandler;
 import net.dv8tion.jda.api.audio.AudioSendHandler;
 import net.dv8tion.jda.api.audio.CombinedAudio;
@@ -13,6 +14,8 @@ import net.dv8tion.jda.api.entities.Guild;
 import net.dv8tion.jda.api.entities.channel.concrete.VoiceChannel;
 import net.dv8tion.jda.api.managers.AudioManager;
 import net.dv8tion.jda.api.requests.GatewayIntent;
+
+import club.minnced.discord.jdave.interop.JDaveSessionFactory;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -80,7 +83,12 @@ public class DiscordBotManager {
 
         running = true;
         LOGGER.info(Lang.get("discord_voice_bridge.startup.starting"));
-        JDA bot = JDABuilder.createLight(token, EnumSet.of(GatewayIntent.GUILD_VOICE_STATES)).build();
+        // Discord enforces E2EE/DAVE encrypted voice: the audio module must
+        // carry a DAVE session factory (jdave) or the voice server closes the
+        // connection with "E2EE/DAVE protocol required" in a reconnect loop.
+        JDA bot = JDABuilder.createLight(token, EnumSet.of(GatewayIntent.GUILD_VOICE_STATES))
+                .setAudioModuleConfig(new AudioModuleConfig().withDaveSessionFactory(new JDaveSessionFactory()))
+                .build();
         jda = bot;
         Thread worker = new Thread(() -> {
             try {
