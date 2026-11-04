@@ -11,3 +11,6 @@ classes/
 
 # SVC jar is not redistributable; every dev provides their own copy (see README)
 libs/*.jar
+
+# Live config with the Discord bot token - never commit
+discord_voice_bridge.json
