@@ -86,7 +86,13 @@ public class DiscordBotManager {
         // Discord enforces E2EE/DAVE encrypted voice: the audio module must
         // carry a DAVE session factory (jdave) or the voice server closes the
         // connection with "E2EE/DAVE protocol required" in a reconnect loop.
-        JDA bot = JDABuilder.createLight(token, EnumSet.of(GatewayIntent.GUILD_VOICE_STATES))
+        // Use create() (NOT createLight): the receive path resolves each
+        // speaker via getUserById(), which is fed by the member cache.
+        // createLight sets MemberCachePolicy.NONE, so every packet from a
+        // speaking user hits a null User and is dropped (silence). create()
+        // with GUILD_VOICE_STATES caches in-voice members (VOICE.or(OWNER)),
+        // which is all we need and needs no privileged intent.
+        JDA bot = JDABuilder.create(token, EnumSet.of(GatewayIntent.GUILD_VOICE_STATES))
                 .setAudioModuleConfig(new AudioModuleConfig().withDaveSessionFactory(new JDaveSessionFactory()))
                 .build();
         jda = bot;
