@@ -44,6 +44,8 @@ public class DiscordBotManager {
     private volatile Consumer<short[]> monoPcmHandler = mono -> { };
     private volatile boolean running = false;
     private volatile JDA jda;
+    private final java.util.concurrent.atomic.AtomicLong providedFrames = new java.util.concurrent.atomic.AtomicLong();
+    private volatile long lastProvidedLogMs = 0;
 
     public DiscordBotManager(DiscordVoiceBridgeConfig config) {
         this.config = config;
@@ -163,6 +165,14 @@ public class DiscordBotManager {
             @Override
             public ByteBuffer provide20MsAudio() {
                 byte[] frame = sendQueue.poll();
+                if (frame != null) {
+                    long n = providedFrames.incrementAndGet();
+                    long now = System.currentTimeMillis();
+                    if (now - lastProvidedLogMs > 10_000) {
+                        lastProvidedLogMs = now;
+                        LOGGER.info("MC to Discord: JDA sent {} frames to the voice connection so far", n);
+                    }
+                }
                 return frame == null ? null : ByteBuffer.wrap(frame);
             }
         });

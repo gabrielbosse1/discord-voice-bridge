@@ -1,7 +1,6 @@
 package com.discordvoicebridge.svc;
 
 import com.discordvoicebridge.DiscordVoiceBridgeMod;
-import com.discordvoicebridge.Lang;
 import com.discordvoicebridge.audio.AudioPipeline;
 import com.discordvoicebridge.config.DiscordVoiceBridgeConfig;
 import com.discordvoicebridge.discord.DiscordBotManager;
@@ -12,11 +11,10 @@ import de.maxhenkel.voicechat.api.Position;
 import de.maxhenkel.voicechat.api.VoicechatConnection;
 import de.maxhenkel.voicechat.api.VoicechatServerApi;
 import de.maxhenkel.voicechat.api.audiochannel.LocationalAudioChannel;
-import de.maxhenkel.voicechat.api.audiolistener.PlayerAudioListener;
+import de.maxhenkel.voicechat.api.events.MicrophonePacketEvent;
 import de.maxhenkel.voicechat.api.opus.OpusDecoder;
 import de.maxhenkel.voicechat.api.opus.OpusEncoder;
 import de.maxhenkel.voicechat.api.packets.MicrophonePacket;
-import de.maxhenkel.voicechat.api.packets.SoundPacket;
 import de.maxhenkel.voicechat.intercompatibility.CommonCompatibilityManager;
 
 import net.minecraft.server.MinecraftServer;
@@ -27,10 +25,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.nio.charset.StandardCharsets;
-import java.util.HashSet;
-import java.util.Set;
 import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Simple Voice Chat side of the bridge.
@@ -40,8 +36,9 @@ import java.util.concurrent.ConcurrentHashMap;
  *       and sent through a {@link LocationalAudioChannel} at the world spawn point. It is a
  *       plain positional audio stream, not a player: no fake player entity, no TAB entry,
  *       no sleep-count inflation, nothing to hide.</li>
- *   <li>Minecraft -> Discord: {@link PlayerAudioListener}s decode group members' Opus mic
- *       packets to PCM and hand them to the Discord bot.</li>
+ *   <li>Minecraft -> Discord: each bridge-group member's own microphone is captured through
+ *       the {@link MicrophonePacketEvent} (subscribed by {@link DvcVoicechatPlugin}) and the
+ *       decoded PCM is handed to the Discord bot.</li>
  * </ul>
  * Uses the public {@code de.maxhenkel.voicechat.api} surface; the only exception
  * is {@link #setRawName}, because the public API truncates group names to 16 chars.
@@ -59,7 +56,13 @@ public class SvcBridge implements SvcVoicechatPlugin {
     private LocationalAudioChannel channel;
     private OpusEncoder encoder;
     private OpusDecoder decoder;
-    private final ConcurrentHashMap<UUID, PlayerAudioListener> listeners = new ConcurrentHashMap<>();
+
+    // Diagnostics so both directions can be confirmed from the log.
+    private final AtomicLong micDecodedFrames = new AtomicLong();
+    private volatile long lastMicLogMs = 0;
+    private final AtomicLong discordToMcFrames = new AtomicLong();
+    private volatile long lastDiscordLogMs = 0;
+    private volatile long lastMembershipLogMs = 0;
 
     public SvcBridge(DiscordVoiceBridgeConfig config) {
         this.config = config;
@@ -124,21 +127,60 @@ public class SvcBridge implements SvcVoicechatPlugin {
             bot.setMonoPcmHandler(mono -> {
                 byte[] opus = encoder.encode(mono);
                 channel.send(opus);
+                long n = discordToMcFrames.incrementAndGet();
+                long now = System.currentTimeMillis();
+                if (now - lastDiscordLogMs > 10_000) {
+                    lastDiscordLogMs = now;
+                    LOGGER.info("Discord to MC: pushed {} opus frames to the in-game channel so far", n);
+                }
             });
         }
 
-        refreshPlayers(server);
+        LOGGER.info("MC to Discord mic capture is event-driven (MicrophonePacketEvent); hearing "
+                + "Discord uses the locational channel at spawn");
     }
 
     @Override
     public void onServerStopped(MinecraftServer server) {
-        for (UUID uuid : listeners.keySet()) {
-            if (api != null) {
-                api.unregisterAudioListener(uuid);
-            }
-        }
-        listeners.clear();
         channel = null;
+    }
+
+    /**
+     * Called for every microphone packet on the server (from {@link DvcVoicechatPlugin}).
+     * When the speaker is in the bridge group, their own voice is decoded and forwarded to
+     * Discord. Runs on SVC's single voice-process thread, so the decoder is not shared
+     * across threads. {@code PlayerAudioListener} cannot capture a speaker's own voice - it
+     * only delivers audio a player receives from others - so this event is the correct hook.
+     */
+    public void onMicPacket(MicrophonePacketEvent event) {
+        if (decoder == null) {
+            return;
+        }
+        DiscordBotManager bot = DiscordVoiceBridgeMod.getDiscordBot();
+        if (bot == null) {
+            return;
+        }
+        VoicechatConnection conn = event.getSenderConnection();
+        if (conn == null || !conn.isInGroup()
+                || !conn.getGroup().getId().equals(GROUP_UUID)) {
+            return; // not a bridge-group member: leave their mic to SVC
+        }
+        MicrophonePacket mic = event.getPacket();
+        byte[] opus = mic.getOpusEncodedData();
+        if (opus == null || opus.length == 0) {
+            return;
+        }
+        short[] mono = decoder.decode(opus);
+        if (mono == null || mono.length == 0) {
+            return;
+        }
+        bot.playToDiscord(AudioPipeline.monoToStereo(mono));
+        long n = micDecodedFrames.incrementAndGet();
+        long now = System.currentTimeMillis();
+        if (now - lastMicLogMs > 10_000) {
+            lastMicLogMs = now;
+            LOGGER.info("MC to Discord: decoded {} opus frames from bridge-group members so far", n);
+        }
     }
 
     @Override
@@ -146,59 +188,28 @@ public class SvcBridge implements SvcVoicechatPlugin {
         if (api == null || botGroup == null) {
             return;
         }
-        Set<UUID> inGroup = new HashSet<>();
-        for (ServerPlayer player : server.getPlayerList().getPlayers()) {
-            VoicechatConnection conn = api.getConnectionOf(player.getUUID());
-            if (conn != null && conn.isInGroup() && conn.getGroup().getId().equals(GROUP_UUID)) {
-                inGroup.add(player.getUUID());
-                ensureListener(player.getUUID());
-            }
-        }
-        listeners.keySet().removeIf(uuid -> {
-            if (inGroup.contains(uuid)) {
-                return false;
-            }
-            api.unregisterAudioListener(uuid);
-            return true;
-        });
-    }
-
-    private void ensureListener(UUID uuid) {
-        if (listeners.containsKey(uuid)) {
+        long now = System.currentTimeMillis();
+        if (now - lastMembershipLogMs <= 15_000) {
             return;
         }
-        PlayerAudioListener listener = api.playerAudioListenerBuilder()
-                .setPlayer(uuid)
-                .setPacketListener(packet -> {
-                    if (!(packet instanceof MicrophonePacket)) {
-                        return;
-                    }
-                    MicrophonePacket mic = (MicrophonePacket) packet;
-                    byte[] opus = mic.getOpusEncodedData();
-                    if (opus == null || opus.length == 0) {
-                        return;
-                    }
-                    // The listener only receives packets from `uuid` (setPlayer), so the
-                    // group check below covers the sender as well.
-                    VoicechatConnection conn = api.getConnectionOf(uuid);
-                    if (conn == null || !conn.isInGroup()
-                            || !conn.getGroup().getId().equals(GROUP_UUID)) {
-                        return;
-                    }
-                    short[] mono = decoder.decode(opus);
-                    if (mono == null || mono.length == 0) {
-                        return;
-                    }
-                    short[] stereo = AudioPipeline.monoToStereo(mono);
-                    DiscordBotManager bot = DiscordVoiceBridgeMod.getDiscordBot();
-                    if (bot != null) {
-                        bot.playToDiscord(stereo);
-                    }
-                })
-                .build();
-        if (api.registerAudioListener(listener)) {
-            listeners.put(uuid, listener);
+        lastMembershipLogMs = now;
+        // Throttled diagnostic: what group (if any) each online player is in, so a
+        // "can't be heard" report can be checked against live membership.
+        StringBuilder sb = new StringBuilder("Bridge group membership view (group=").append(GROUP_UUID).append("):");
+        for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+            VoicechatConnection conn = api.getConnectionOf(player.getUUID());
+            if (conn == null) {
+                sb.append(" [").append(player.getGameProfile().name()).append(": no voicechat connection]");
+            } else if (!conn.isInGroup()) {
+                sb.append(" [").append(player.getGameProfile().name()).append(": not in a group]");
+            } else if (conn.getGroup().getId().equals(GROUP_UUID)) {
+                sb.append(" [").append(player.getGameProfile().name()).append(": IN BRIDGE GROUP]");
+            } else {
+                sb.append(" [").append(player.getGameProfile().name()).append(": in other group ")
+                        .append(conn.getGroup().getId()).append(']');
+            }
         }
+        LOGGER.info(sb.toString());
     }
 
     /**

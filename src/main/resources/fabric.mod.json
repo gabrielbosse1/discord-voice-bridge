@@ -12,6 +12,9 @@
   "entrypoints": {
     "server": [
       "com.discordvoicebridge.DiscordVoiceBridgeMod"
+    ],
+    "voicechat": [
+      "com.discordvoicebridge.svc.DvcVoicechatPlugin"
     ]
   },
   "mixins": [
