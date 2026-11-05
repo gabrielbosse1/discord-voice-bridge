@@ -7,19 +7,24 @@ import com.discordvoicebridge.discord.DiscordBotManager;
 
 import de.maxhenkel.voicechat.api.Group;
 import de.maxhenkel.voicechat.api.Group.Type;
-import de.maxhenkel.voicechat.api.Position;
 import de.maxhenkel.voicechat.api.VoicechatConnection;
 import de.maxhenkel.voicechat.api.VoicechatServerApi;
-import de.maxhenkel.voicechat.api.audiochannel.LocationalAudioChannel;
+import de.maxhenkel.voicechat.api.audiochannel.EntityAudioChannel;
 import de.maxhenkel.voicechat.api.events.MicrophonePacketEvent;
 import de.maxhenkel.voicechat.api.opus.OpusDecoder;
 import de.maxhenkel.voicechat.api.opus.OpusEncoder;
 import de.maxhenkel.voicechat.api.packets.MicrophonePacket;
 import de.maxhenkel.voicechat.intercompatibility.CommonCompatibilityManager;
 
+import net.fabricmc.fabric.api.entity.FakePlayer;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.effect.MobEffectInstance;
+import net.minecraft.world.effect.MobEffects;
+import net.minecraft.world.level.GameType;
+
+import com.mojang.authlib.GameProfile;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -32,13 +37,18 @@ import java.util.concurrent.atomic.AtomicLong;
  * Simple Voice Chat side of the bridge.
  * <ul>
  *   <li>Creates the persistent group from config, name kept verbatim.</li>
+ *   <li>Spawns an invisible spectator {@link FakePlayer} at world spawn for the bot.
+ *       It is not in the TAB list (never goes through PlayerList), is excluded from
+ *       the sleep count (vanilla skips spectators), cannot be hit, move, sleep, ride
+ *       or act (FakePlayer hooks + spectator), and is invisible to normal players
+ *       (Invisibility effect).</li>
  *   <li>Discord -> Minecraft: PCM is Opus-encoded via {@link VoicechatServerApi#createEncoder()}
- *       and sent through a {@link LocationalAudioChannel} at the world spawn point. It is a
- *       plain positional audio stream, not a player: no fake player entity, no TAB entry,
- *       no sleep-count inflation, nothing to hide.</li>
- *   <li>Minecraft -> Discord: each bridge-group member's own microphone is captured through
- *       the {@link MicrophonePacketEvent} (subscribed by {@link DvcVoicechatPlugin}) and the
- *       decoded PCM is handed to the Discord bot.</li>
+ *       and sent through an {@link EntityAudioChannel} bound to the fake player, so it
+ *       sounds like a player inside the group. The channel distance is very large so
+ *       it is audible across the overworld, not just near spawn.</li>
+ *   <li>Minecraft -> Discord: each bridge-group member's own microphone is captured
+ *       through the {@link MicrophonePacketEvent} (subscribed by {@link DvcVoicechatPlugin})
+ *       and the decoded PCM is handed to the Discord bot.</li>
  * </ul>
  * Uses the public {@code de.maxhenkel.voicechat.api} surface; the only exception
  * is {@link #setRawName}, because the public API truncates group names to 16 chars.
@@ -53,9 +63,10 @@ public class SvcBridge implements SvcVoicechatPlugin {
     private final DiscordVoiceBridgeConfig config;
     private VoicechatServerApi api;
     private Group botGroup;
-    private LocationalAudioChannel channel;
+    private EntityAudioChannel channel;
     private OpusEncoder encoder;
     private OpusDecoder decoder;
+    private FakePlayer botPlayer;
 
     // Diagnostics so both directions can be confirmed from the log.
     private final AtomicLong micDecodedFrames = new AtomicLong();
@@ -110,17 +121,31 @@ public class SvcBridge implements SvcVoicechatPlugin {
         encoder = api.createEncoder();
         decoder = api.createDecoder();
 
-        // --- Discord -> Minecraft audio: locational stream at the spawn point, no player ---
+        // --- Discord -> Minecraft audio: fake player, invisible spectator at spawn ---
         ServerLevel overworld = server.overworld();
+        GameProfile profile = new GameProfile(DiscordVoiceBridgeMod.BOT_UUID, config.getBotDisplayName());
+        botPlayer = FakePlayer.get(overworld, profile);
         var spawn = overworld.getLevelData().getRespawnData().pos();
-        Position position = api.createPosition(spawn.getX() + 0.5, spawn.getY(), spawn.getZ() + 0.5);
-        channel = api.createLocationalAudioChannel(CHANNEL_UUID, api.fromServerLevel(overworld), position);
-        // A locational stream only reaches players within its distance of the
-        // anchor point, so with the default (~16-32 blocks) Discord is silent unless
-        // you stand at spawn. A very large distance keeps full volume at any
-        // position in the overworld, so bridge members hear Discord without walking
-        // to the spawn point. (Still the overworld: a player in the Nether/End won't
-        // hear an overworld-anchored positional stream.)
+        botPlayer.setPos(spawn.getX() + 0.5, spawn.getY(), spawn.getZ() + 0.5);
+        // Spectator: excluded from the sleep count (vanilla skips spectators),
+        // cannot sleep or interact. The setGameMode broadcast only carries
+        // UPDATE_GAME_MODE entries, which the client ignores for a UUID it never
+        // saw in ADD_PLAYER, so the bot cannot leak into the TAB list.
+        botPlayer.setGameMode(GameType.SPECTATOR);
+        // Invisible to normal players (spectators still see it). The entity must
+        // still be sent to clients: the SVC client anchors player-sound audio on
+        // the tracked entity via ClientLevel.getPlayerByUUID(). No ambient
+        // particles so the invisibility is not even a faint shimmer.
+        botPlayer.addEffect(new MobEffectInstance(MobEffects.INVISIBILITY, 1_000_000_000, 0, false, false));
+        if (!overworld.addFreshEntity(botPlayer)) {
+            LOGGER.warn("Bot player could not be spawned into the overworld");
+        }
+
+        channel = api.createEntityAudioChannel(CHANNEL_UUID, api.fromEntity(botPlayer));
+        // A player-sound channel only reaches players within its distance of the
+        // entity. A very large distance keeps full volume at any position in the
+        // overworld (broadcast scans the online player list, not chunks, so it is
+        // cheap), so bridge members hear Discord without walking to the spawn point.
         channel.setDistance(1_000_000f);
         if (botGroup.getType() == Type.ISOLATED) {
             channel.setFilter(player -> {
@@ -138,17 +163,21 @@ public class SvcBridge implements SvcVoicechatPlugin {
                 long now = System.currentTimeMillis();
                 if (now - lastDiscordLogMs > 10_000) {
                     lastDiscordLogMs = now;
-                    LOGGER.info("Discord to MC: pushed {} opus frames to the in-game channel so far", n);
+                    LOGGER.info("Discord to MC: pushed {} opus frames to the bot player so far", n);
                 }
             });
         }
 
         LOGGER.info("MC to Discord mic capture is event-driven (MicrophonePacketEvent); hearing "
-                + "Discord uses the locational channel at spawn");
+                + "Discord uses the bot player '{}' at spawn", profile.name());
     }
 
     @Override
     public void onServerStopped(MinecraftServer server) {
+        if (botPlayer != null) {
+            botPlayer.discard();
+            botPlayer = null;
+        }
         channel = null;
     }
 

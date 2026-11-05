@@ -37,6 +37,10 @@ public class DiscordVoiceBridgeMod implements DedicatedServerModInitializer {
     public static final String MOD_ID = "discord_voice_bridge";
     public static final Logger LOGGER = LoggerFactory.getLogger(MOD_ID);
 
+    /** Stable UUID of the bridge bot (fake player at spawn, invisible spectator). */
+    public static final java.util.UUID BOT_UUID =
+            java.util.UUID.nameUUIDFromBytes("discord_voice_bridge:bot".getBytes(StandardCharsets.UTF_8));
+
     private static DiscordVoiceBridgeConfig config;
     private static DiscordBotManager discordBot;
     private static SvcVoicechatPlugin svcPlugin;
@@ -141,6 +145,7 @@ public class DiscordVoiceBridgeMod implements DedicatedServerModInitializer {
                     Lang.get("discord_voice_bridge.config_readme.token"),
                     Lang.get("discord_voice_bridge.config_readme.voiceChannelId"),
                     Lang.get("discord_voice_bridge.config_readme.groupName"),
+                    Lang.get("discord_voice_bridge.config_readme.botDisplayName"),
                     Lang.get("discord_voice_bridge.config_readme.groupType"),
                     Lang.get("discord_voice_bridge.config_readme.groupPassword"),
                     Lang.get("discord_voice_bridge.config_readme.enabled"),
