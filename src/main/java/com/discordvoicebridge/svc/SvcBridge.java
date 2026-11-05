@@ -115,6 +115,13 @@ public class SvcBridge implements SvcVoicechatPlugin {
         var spawn = overworld.getLevelData().getRespawnData().pos();
         Position position = api.createPosition(spawn.getX() + 0.5, spawn.getY(), spawn.getZ() + 0.5);
         channel = api.createLocationalAudioChannel(CHANNEL_UUID, api.fromServerLevel(overworld), position);
+        // A locational stream only reaches players within its distance of the
+        // anchor point, so with the default (~16-32 blocks) Discord is silent unless
+        // you stand at spawn. A very large distance keeps full volume at any
+        // position in the overworld, so bridge members hear Discord without walking
+        // to the spawn point. (Still the overworld: a player in the Nether/End won't
+        // hear an overworld-anchored positional stream.)
+        channel.setDistance(1_000_000f);
         if (botGroup.getType() == Type.ISOLATED) {
             channel.setFilter(player -> {
                 VoicechatConnection conn = api.getConnectionOf(player);

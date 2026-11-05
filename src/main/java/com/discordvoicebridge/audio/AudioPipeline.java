@@ -19,13 +19,16 @@ public final class AudioPipeline {
     }
 
     /**
-     * Convert interleaved stereo PCM to one fixed-size JDA send frame: 960 samples,
-     * big-endian 16-bit, padded with silence (zeros) when the input is short. JDA's
-     * {@code AudioSendHandler#provide20MsAudio} contract requires exactly this shape.
+     * Convert interleaved stereo PCM to one fixed-size JDA send frame: 960 samples
+     * per channel (1920 interleaved = 20 ms @ 48 kHz), big-endian 16-bit, padded with
+     * silence (zeros) when the input is short. JDA's {@code AudioSendHandler#provide20MsAudio}
+     * contract requires exactly this shape. The cap is {@code SAMPLES_PER_FRAME * 2}
+     * because the input is interleaved L/R, not mono - capping at SAMPLES_PER_FRAME would
+     * keep only the first 10 ms and pad the rest with silence (robotic/choppy output).
      */
     public static byte[] stereoToFrame(short[] stereo) {
         byte[] frame = new byte[STEREO_FRAME_BYTES];
-        int samples = Math.min(stereo.length, SAMPLES_PER_FRAME);
+        int samples = Math.min(stereo.length, SAMPLES_PER_FRAME * 2);
         for (int i = 0; i < samples; i++) {
             frame[i * 2] = (byte) (stereo[i] >> 8);
             frame[i * 2 + 1] = (byte) stereo[i];
