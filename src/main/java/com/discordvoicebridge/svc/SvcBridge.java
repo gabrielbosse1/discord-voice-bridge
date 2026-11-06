@@ -74,6 +74,8 @@ public class SvcBridge implements SvcVoicechatPlugin {
     private final AtomicLong discordToMcFrames = new AtomicLong();
     private volatile long lastDiscordLogMs = 0;
     private volatile long lastMembershipLogMs = 0;
+    /** Last bridge-group member the bot was following (position is kept on it). */
+    private volatile UUID followTarget;
 
     public SvcBridge(DiscordVoiceBridgeConfig config) {
         this.config = config;
@@ -179,6 +181,7 @@ public class SvcBridge implements SvcVoicechatPlugin {
             botPlayer = null;
         }
         channel = null;
+        followTarget = null;
     }
 
     /**
@@ -224,6 +227,7 @@ public class SvcBridge implements SvcVoicechatPlugin {
         if (api == null || botGroup == null) {
             return;
         }
+        updateBotPosition(server);
         long now = System.currentTimeMillis();
         if (now - lastMembershipLogMs <= 15_000) {
             return;
@@ -246,6 +250,56 @@ public class SvcBridge implements SvcVoicechatPlugin {
             }
         }
         LOGGER.info(sb.toString());
+    }
+
+    /**
+     * Keeps the bot player next to the bridge-group member it follows, every tick.
+     * The SVC client plays a player's audio anchored on the tracked entity it has
+     * locally, and the server only sends entities within the viewer's render
+     * distance - so a bot parked at spawn is inaudible to a member far away.
+     * Following the member keeps the bot tracked (full volume, any position or
+     * dimension) without affecting anything: the bot has no physics (FakePlayer
+     * ticks are a no-op) and is a spectator, so the move is invisible and inert.
+     */
+    private void updateBotPosition(MinecraftServer server) {
+        FakePlayer bot = botPlayer;
+        if (bot == null || bot.isRemoved()) {
+            return;
+        }
+        ServerPlayer target = null;
+        UUID targetId = null;
+        for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+            VoicechatConnection conn = api.getConnectionOf(player.getUUID());
+            if (conn != null && conn.isInGroup() && conn.getGroup().getId().equals(GROUP_UUID)) {
+                target = player;
+                targetId = player.getUUID();
+                break;
+            }
+        }
+        if (target == null) {
+            followTarget = null;
+            return; // nobody in the group: bot stays where it is
+        }
+        if (bot.level() != target.level()) {
+            // Dimension change: teleport the bot to the member there.
+            bot.teleportTo(target.level(), target.getX(), target.getY(), target.getZ(),
+                    java.util.EnumSet.noneOf(net.minecraft.world.entity.Relative.class),
+                    bot.getYRot(), bot.getXRot(), true);
+            followTarget = targetId;
+            LOGGER.info("Bot player followed {} to their dimension", target.getGameProfile().name());
+            return;
+        }
+        if (!targetId.equals(followTarget)) {
+            // New member to follow: snap once, then track.
+            bot.teleportTo(target.getX(), target.getY(), target.getZ());
+            followTarget = targetId;
+            return;
+        }
+        // Same member, same dimension: follow smoothly. setPos sends no teleport
+        // packet, so the client just interpolates the normal movement.
+        if (bot.distanceToSqr(target.getX(), target.getY(), target.getZ()) > 4f * 4f) {
+            bot.setPos(target.getX(), target.getY(), target.getZ());
+        }
     }
 
     /**
