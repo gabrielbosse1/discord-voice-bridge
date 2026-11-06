@@ -41,6 +41,7 @@ public class DiscordBotManager {
 
     private final DiscordVoiceBridgeConfig config;
     private final AudioPipeline.StereoFrameQueue sendQueue = new AudioPipeline.StereoFrameQueue(100);
+    private LegacyAudioPassthrough legacyPassthrough;
     private volatile Consumer<short[]> monoPcmHandler = mono -> { };
     private volatile boolean running = false;
     private volatile JDA jda;
@@ -83,6 +84,8 @@ public class DiscordBotManager {
             return;
         }
 
+        legacyPassthrough = new LegacyAudioPassthrough(config.getLegacyUserIds());
+
         running = true;
         LOGGER.info(Lang.get("discord_voice_bridge.startup.starting"));
         // Discord enforces E2EE/DAVE encrypted voice: the audio module must
@@ -94,10 +97,27 @@ public class DiscordBotManager {
         // speaking user hits a null User and is dropped (silence). create()
         // with GUILD_VOICE_STATES caches in-voice members (VOICE.or(OWNER)),
         // which is all we need and needs no privileged intent.
+        LegacyAudioPassthrough passthrough = legacyPassthrough;
         JDA bot = JDABuilder.create(token, EnumSet.of(GatewayIntent.GUILD_VOICE_STATES))
-                .setAudioModuleConfig(new AudioModuleConfig().withDaveSessionFactory(new JDaveSessionFactory()))
+                .setAudioModuleConfig(new AudioModuleConfig().withDaveSessionFactory(
+                        new JDaveSessionFactory() {
+                            @Override
+                            public net.dv8tion.jda.api.audio.dave.DaveSession createDaveSession(
+                                    net.dv8tion.jda.api.audio.dave.DaveProtocolCallbacks callbacks,
+                                    long selfUserId, long channelId) {
+                                net.dv8tion.jda.api.audio.dave.DaveSession s =
+                                        super.createDaveSession(callbacks, selfUserId, channelId);
+                                if (passthrough != null) {
+                                    passthrough.bindSession(s);
+                                }
+                                return s;
+                            }
+                        }))
                 .build();
         jda = bot;
+        if (passthrough != null) {
+            passthrough.start();
+        }
         Thread worker = new Thread(() -> {
             try {
                 bot.awaitReady();
@@ -191,6 +211,11 @@ public class DiscordBotManager {
                 self.shutdownNow();
             } catch (Exception ignored) {
             }
+        }
+        LegacyAudioPassthrough passthrough = legacyPassthrough;
+        legacyPassthrough = null;
+        if (passthrough != null) {
+            passthrough.close();
         }
     }
 

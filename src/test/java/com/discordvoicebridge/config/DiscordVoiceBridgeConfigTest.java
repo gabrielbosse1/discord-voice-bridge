@@ -25,6 +25,7 @@ class DiscordVoiceBridgeConfigTest {
         cfg.setGroupName("Meu Grupo");
         cfg.setGroupType("ISOLATED");
         cfg.setGroupPassword("secret");
+        cfg.setLegacyUserIds(java.util.List.of("411916947773587456"));
         cfg.setEnabled(false);
         cfg.save();
 
@@ -35,6 +36,7 @@ class DiscordVoiceBridgeConfigTest {
         assertEquals("Meu Grupo", reloaded.getGroupName());
         assertEquals("ISOLATED", reloaded.getGroupType());
         assertEquals("secret", reloaded.getGroupPassword());
+        assertEquals(java.util.List.of("411916947773587456"), reloaded.getLegacyUserIds());
         assertFalse(reloaded.isEnabled());
     }
 

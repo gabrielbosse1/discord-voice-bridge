@@ -6,6 +6,8 @@
   "discord_voice_bridge.config.reload": "Recarregar configuração agora",
   "discord_voice_bridge.config.status": "Verificar status da bridge",
   "discord_voice_bridge.config.group_name": "Nome do grupo SVC: {0}",
+  "discord_voice_bridge.config.legacy_user_ids": "IDs de usuários com áudio legado: {0}",
+  "discord_voice_bridge.config.legacy_user_ids_none": "nenhum configurado",
   "discord_voice_bridge.config.voice_channel": "Canal de voz do Discord: {0}",
   "discord_voice_bridge.config.file": "Edite o arquivo: {0} (descrições em README.md)",
   "discord_voice_bridge.config.instruction": "Clique em uma opção acima para alterá-la.",
@@ -34,6 +36,7 @@
   "discord_voice_bridge.config_readme.groupName": "- groupName: nome do grupo do Simple Voice Chat criado no servidor",
   "discord_voice_bridge.config_readme.groupType": "- groupType: NORMAL ou ISOLATED (tipo do grupo do SVC; o áudio do Discord vai para os membros do grupo nos dois casos)",
   "discord_voice_bridge.config_readme.groupPassword": "- groupPassword: senha para entrar no grupo; vazio = sem senha (grupo público)",
+  "discord_voice_bridge.config_readme.legacyUserIds": "- legacyUserIds: IDs de usuários do Discord que ainda transmitem sem criptografia (legado, ex.: bots de música, clientes antigos); o áudio deles é passado para que possam ser ouvidos. Deixe vazio se ninguém precisar",
   "discord_voice_bridge.config_readme.enabled": "- enabled: liga/desliga a ponte sem reiniciar o servidor",
   "discord_voice_bridge.config_readme.reload": "Após editar, use /dvc config reload (ou reinicie o servidor)."
 }

@@ -22,6 +22,8 @@ import net.minecraft.network.chat.Style;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.permissions.PermissionLevel;
 
+import java.util.List;
+
 import static net.minecraft.commands.Commands.literal;
 
 /**
@@ -83,6 +85,11 @@ public class ConfigCommand {
         player.sendSystemMessage(statusBtn);
 
         player.sendSystemMessage(Component.literal(Lang.get("discord_voice_bridge.config.group_name", cfg.getGroupName())));
+        List<String> legacyIds = cfg.getLegacyUserIds();
+        player.sendSystemMessage(Component.literal(Lang.get("discord_voice_bridge.config.legacy_user_ids",
+                legacyIds == null || legacyIds.isEmpty()
+                        ? Lang.get("discord_voice_bridge.config.legacy_user_ids_none")
+                        : String.join(", ", legacyIds))));
         player.sendSystemMessage(Component.literal(Lang.get("discord_voice_bridge.config.voice_channel",
                 cfg.getVoiceChannelId() == null || cfg.getVoiceChannelId().isBlank()
                         ? Lang.get("discord_voice_bridge.error.missing_channel") : cfg.getVoiceChannelId())));

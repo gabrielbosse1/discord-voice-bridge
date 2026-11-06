@@ -54,6 +54,7 @@ Then connect a client to the server, join the Discord voice channel from another
 | `groupName` | string | `"Discord Voice Bridge"` | SVC group name, verbatim |
 | `groupType` | string | `"NORMAL"` | `NORMAL` or `ISOLATED` |
 | `groupPassword` | string | `""` | Password to join the group; empty = no password |
+| `legacyUserIds` | string array | `[]` | Discord user IDs of senders still on unencrypted voice (music bots, old clients); their frames are passed through so they can be heard |
 | `enabled` | boolean | `true` | Start the bridge on server boot |
 
 Edit the file while the server runs and `/dvc config reload`, or just restart.
@@ -83,6 +84,7 @@ User-facing strings all go through translation keys. `pt_br.json` is the default
 ## Design notes
 
 - Discord to Minecraft uses a `StaticAudioChannel` (`createStaticAudioChannel`) with per-member targets instead of a fake player: a player-anchored channel requires the client to have the entity tracked locally, so it is only audible near the bot. A static sound has no position at all, so it plays at full volume anywhere, in any dimension, with no entity to spawn, track or follow. Targets are kept in sync with group membership every tick, and `setBypassGroupIsolation(true)` is set because SVC's static channel would otherwise skip players sitting in an isolated group.
+- Discord senders that still transmit unencrypted (legacy) voice — older music bots, older clients — are dropped by the DAVE/E2EE decryptor ("frame is not encrypted and pass through is disabled") because Discord negotiates them to protocol version 1. `LegacyAudioPassthrough` fixes that per user ID from `legacyUserIds`: it calls the public `DaveDecryptor.prepareTransition(0)` (the native pass-through switch) on the configured users' private per-user decryptors (reached by two type-based field lookups, no class-name strings, so relocation is safe), re-applied every second because an MLS epoch transition re-prepares the same decryptor instance with the negotiated version. Non-listed users keep full E2EE decryption.
 - SVC's `Group.Builder.setName()` runs the name through `convertGroupName`, which trims and truncates to 16 characters. `SvcBridge#setRawName` writes the raw name into the builder right before `build()`; that is the only reflection in the mod. Everything else stays on the public `de.maxhenkel.voicechat.api` surface, no access transformers.
 - MC to Discord: the `MicrophonePacketEvent` (registered by the `voicechat` entrypoint `DvcVoicechatPlugin`) captures each bridge-group member's own microphone. The older `PlayerAudioListener` API only delivers audio a player *receives from others*, so it can never capture a speaker's own voice.
 

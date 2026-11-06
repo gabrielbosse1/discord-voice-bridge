@@ -35,6 +35,7 @@ public class DiscordVoiceBridgeConfig {
     private String groupName = "Discord Voice Bridge";
     private String groupType = "NORMAL"; // NORMAL | ISOLATED
     private String groupPassword = ""; // empty = no password (public group)
+    private java.util.List<String> legacyUserIds = new java.util.ArrayList<>(); // Discord users still on unencrypted voice
     private boolean enabled = true;
 
     public DiscordVoiceBridgeConfig(Path configPath) {
@@ -57,6 +58,7 @@ public class DiscordVoiceBridgeConfig {
             this.groupName = parsed.groupName == null ? "Discord Voice Bridge" : parsed.groupName;
             this.groupType = parsed.groupType == null ? "NORMAL" : parsed.groupType;
             this.groupPassword = parsed.groupPassword == null ? "" : parsed.groupPassword;
+            this.legacyUserIds = parsed.legacyUserIds == null ? new java.util.ArrayList<>() : parsed.legacyUserIds;
             this.enabled = parsed.enabled;
             LOGGER.info("Loaded configuration from {}", configPath);
         } catch (JsonSyntaxException | IOException e) {
@@ -109,6 +111,18 @@ public class DiscordVoiceBridgeConfig {
     public void setGroupName(String groupName) {
         lock.writeLock().lock();
         try { this.groupName = groupName; } finally { lock.writeLock().unlock(); }
+    }
+
+    /** Discord user IDs still transmitting unencrypted (legacy) voice, as strings. */
+    public java.util.List<String> getLegacyUserIds() {
+        lock.readLock().lock();
+        try { return new java.util.ArrayList<>(legacyUserIds); } finally { lock.readLock().unlock(); }
+    }
+
+    public void setLegacyUserIds(java.util.List<String> legacyUserIds) {
+        lock.writeLock().lock();
+        try { this.legacyUserIds = legacyUserIds == null ? new java.util.ArrayList<>() : new java.util.ArrayList<>(legacyUserIds); }
+        finally { lock.writeLock().unlock(); }
     }
 
     public String getGroupType() {

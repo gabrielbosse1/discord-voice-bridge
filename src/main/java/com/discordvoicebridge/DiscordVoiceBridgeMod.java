@@ -143,6 +143,7 @@ public class DiscordVoiceBridgeMod implements DedicatedServerModInitializer {
                     Lang.get("discord_voice_bridge.config_readme.groupName"),
                     Lang.get("discord_voice_bridge.config_readme.groupType"),
                     Lang.get("discord_voice_bridge.config_readme.groupPassword"),
+                    Lang.get("discord_voice_bridge.config_readme.legacyUserIds"),
                     Lang.get("discord_voice_bridge.config_readme.enabled"),
                     "",
                     Lang.get("discord_voice_bridge.config_readme.reload"),
