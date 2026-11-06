@@ -23,7 +23,6 @@ class DiscordVoiceBridgeConfigTest {
         cfg.setToken("test-token");
         cfg.setVoiceChannelId("1234567890");
         cfg.setGroupName("Meu Grupo");
-        cfg.setBotDisplayName("Bridge Bot");
         cfg.setGroupType("ISOLATED");
         cfg.setGroupPassword("secret");
         cfg.setEnabled(false);
@@ -34,7 +33,6 @@ class DiscordVoiceBridgeConfigTest {
         assertEquals("test-token", reloaded.getToken());
         assertEquals("1234567890", reloaded.getVoiceChannelId());
         assertEquals("Meu Grupo", reloaded.getGroupName());
-        assertEquals("Bridge Bot", reloaded.getBotDisplayName());
         assertEquals("ISOLATED", reloaded.getGroupType());
         assertEquals("secret", reloaded.getGroupPassword());
         assertFalse(reloaded.isEnabled());

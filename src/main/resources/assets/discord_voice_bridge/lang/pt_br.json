@@ -32,7 +32,7 @@
   "discord_voice_bridge.config_readme.token": "- token: token do bot do Discord (obrigatório; crie em discord.com/developers/applications)",
   "discord_voice_bridge.config_readme.voiceChannelId": "- voiceChannelId: ID do canal de voz do Discord onde a ponte entra (canal do servidor, não o canal do bot)",
   "discord_voice_bridge.config_readme.groupName": "- groupName: nome do grupo do Simple Voice Chat criado no servidor",
-  "discord_voice_bridge.config_readme.groupType": "- groupType: NORMAL (todo mundo pode ouvir o bot) ou ISOLATED (só membros do grupo)",
+  "discord_voice_bridge.config_readme.groupType": "- groupType: NORMAL ou ISOLATED (tipo do grupo do SVC; o áudio do Discord vai para os membros do grupo nos dois casos)",
   "discord_voice_bridge.config_readme.groupPassword": "- groupPassword: senha para entrar no grupo; vazio = sem senha (grupo público)",
   "discord_voice_bridge.config_readme.enabled": "- enabled: liga/desliga a ponte sem reiniciar o servidor",
   "discord_voice_bridge.config_readme.reload": "Após editar, use /dvc config reload (ou reinicie o servidor)."

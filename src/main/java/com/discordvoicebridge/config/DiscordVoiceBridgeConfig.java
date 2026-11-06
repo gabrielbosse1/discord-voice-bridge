@@ -33,7 +33,6 @@ public class DiscordVoiceBridgeConfig {
     private String token = "";
     private String voiceChannelId = "";
     private String groupName = "Discord Voice Bridge";
-    private String botDisplayName = "Discord Voice Bridge";
     private String groupType = "NORMAL"; // NORMAL | ISOLATED
     private String groupPassword = ""; // empty = no password (public group)
     private boolean enabled = true;
@@ -56,7 +55,6 @@ public class DiscordVoiceBridgeConfig {
             this.token = parsed.token == null ? "" : parsed.token;
             this.voiceChannelId = parsed.voiceChannelId == null ? "" : parsed.voiceChannelId;
             this.groupName = parsed.groupName == null ? "Discord Voice Bridge" : parsed.groupName;
-            this.botDisplayName = parsed.botDisplayName == null ? "Discord Voice Bridge" : parsed.botDisplayName;
             this.groupType = parsed.groupType == null ? "NORMAL" : parsed.groupType;
             this.groupPassword = parsed.groupPassword == null ? "" : parsed.groupPassword;
             this.enabled = parsed.enabled;
@@ -111,16 +109,6 @@ public class DiscordVoiceBridgeConfig {
     public void setGroupName(String groupName) {
         lock.writeLock().lock();
         try { this.groupName = groupName; } finally { lock.writeLock().unlock(); }
-    }
-
-    public String getBotDisplayName() {
-        lock.readLock().lock();
-        try { return botDisplayName; } finally { lock.readLock().unlock(); }
-    }
-
-    public void setBotDisplayName(String botDisplayName) {
-        lock.writeLock().lock();
-        try { this.botDisplayName = botDisplayName; } finally { lock.writeLock().unlock(); }
     }
 
     public String getGroupType() {
