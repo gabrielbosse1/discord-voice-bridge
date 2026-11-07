@@ -58,8 +58,13 @@ final class AudioHealth implements AutoCloseable {
     private final Consumer<short[]> sink;
     private final Map<Long, UserState> users = new ConcurrentHashMap<>();
     private final ScheduledExecutorService timer;
+    private long lastSinkWarnMs;
 
     private static final class UserState {
+        // Set under the user lock before the native decoder is freed; an
+        // in-flight onPacket re-checks it in its lock so a teardown/eviction
+        // can never free a pointer that is about to be used (native crash).
+        boolean dead;
         PointerByReference dec;
         final short[] decBuf = new short[MAX_FRAME_SAMPLES * CHANNELS];
         final ArrayDeque<short[]> queue = new ArrayDeque<>();
@@ -87,32 +92,59 @@ final class AudioHealth implements AutoCloseable {
             t.setDaemon(true);
             return t;
         });
-        timer.scheduleAtFixedRate(this::mixTick, 20, 20, TimeUnit.MILLISECONDS);
-        timer.scheduleAtFixedRate(this::report, 5, 5, TimeUnit.SECONDS);
+        // One throw (an SVC encoder/channel error, e.g. mid-teardown) must not
+        // kill the scheduled tasks: scheduleAtFixedRate suppresses a task
+        // forever after an exception, which would mean permanent silence with
+        // no diagnostics. mix warnings are throttled so a persistent failure
+        // does not turn into a 50 warn/s log bomb.
+        timer.scheduleAtFixedRate(() -> {
+            try {
+                mixTick();
+            } catch (Throwable t) {
+                long now = System.currentTimeMillis();
+                if (now - lastSinkWarnMs > 5_000) {
+                    lastSinkWarnMs = now;
+                    LOGGER.warn("AudioHealth mix tick failed (repeats throttled)", t);
+                }
+            }
+        }, 20, 20, TimeUnit.MILLISECONDS);
+        timer.scheduleAtFixedRate(() -> {
+            try {
+                report();
+            } catch (Throwable t) {
+                LOGGER.warn("AudioHealth report failed", t);
+            }
+        }, 5, 5, TimeUnit.SECONDS);
     }
 
-    /** One post-DAVE opus packet from JDA (receive thread). */
+    /**
+     * One post-DAVE opus packet from JDA (receive thread). The native decode runs
+     * inside the user lock: evictStale/close free the decoder under that same
+     * lock and flip {@link UserState#dead}, so a packet that is still in flight
+     * during a teardown can never decode into a freed native pointer.
+     */
     void onPacket(long userId, int ssrc, byte[] opus) {
         UserState st = state(userId);
         if (st == null) {
             return;
         }
         synchronized (st) {
+            if (st.dead) {
+                return;
+            }
             st.packets++;
             st.lastPktMs = System.currentTimeMillis();
             st.ssrc = ssrc;
-        }
-        if (opus == null || opus.length == 0) {
-            return;
-        }
-        int n;
-        try {
-            n = Opus.INSTANCE.opus_decode(st.dec, opus, opus.length,
-                    ShortBuffer.wrap(st.decBuf), MAX_FRAME_SAMPLES, 0);
-        } catch (Throwable t) {
-            n = -999; // native throw: treat as a decode error, never kill the receive thread
-        }
-        synchronized (st) {
+            if (opus == null || opus.length == 0) {
+                return;
+            }
+            int n;
+            try {
+                n = Opus.INSTANCE.opus_decode(st.dec, opus, opus.length,
+                        ShortBuffer.wrap(st.decBuf), MAX_FRAME_SAMPLES, 0);
+            } catch (Throwable t) {
+                n = -999; // native throw: treat as a decode error, never kill the receive thread
+            }
             if (n <= 0) {
                 st.decErr++;
                 st.lastErr = n;
@@ -318,8 +350,16 @@ final class AudioHealth implements AutoCloseable {
         for (Map.Entry<Long, UserState> e : users.entrySet()) {
             UserState st = e.getValue();
             if (st.lastPktMs > 0 && now - st.lastPktMs > STALE_MS) {
-                if (users.remove(e.getKey(), st) && st.dec != null) {
-                    Opus.INSTANCE.opus_decoder_destroy(st.dec);
+                // Remove first, then free under the user lock: an in-flight
+                // onPacket blocks on the lock, sees dead=true and bails before
+                // it can decode into the freed decoder.
+                if (users.remove(e.getKey(), st)) {
+                    synchronized (st) {
+                        st.dead = true;
+                        if (st.dec != null) {
+                            Opus.INSTANCE.opus_decoder_destroy(st.dec);
+                        }
+                    }
                 }
             }
         }
@@ -329,8 +369,11 @@ final class AudioHealth implements AutoCloseable {
     public void close() {
         timer.shutdownNow();
         for (UserState st : users.values()) {
-            if (st.dec != null) {
-                Opus.INSTANCE.opus_decoder_destroy(st.dec);
+            synchronized (st) {
+                st.dead = true;
+                if (st.dec != null) {
+                    Opus.INSTANCE.opus_decoder_destroy(st.dec);
+                }
             }
         }
         users.clear();
