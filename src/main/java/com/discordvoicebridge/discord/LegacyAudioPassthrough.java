@@ -77,6 +77,7 @@ public final class LegacyAudioPassthrough implements AutoCloseable {
 
     /** Per-user observation state and desired/current native flag. */
     private static final class State {
+        boolean registered;   // decryptor currently exists = user is in the channel
         int quietTicks;
         int failingTicks;
         // Start OFF: the native default for a v1-negotiated decryptor is already
@@ -232,6 +233,31 @@ public final class LegacyAudioPassthrough implements AutoCloseable {
             // Transient conflict with the DAVE thread is fine; the next tick
             // retries (the native flag only changes on state transitions).
             return false;
+        }
+    }
+
+    /** Diagnostic: the DAVE session's negotiated protocol version and the set of
+     *  senders that currently have a native decryptor (== in the channel). */
+    public String describeSession() {
+        DaveSessionManager mgr = manager;
+        if (mgr == null) {
+            return "no DAVE manager bound yet";
+        }
+        try {
+            Field mapField = DaveSessionManager.class.getDeclaredField("decryptors");
+            mapField.setAccessible(true);
+            @SuppressWarnings("unchecked")
+            Map<Long, DaveDecryptor> decryptors = (Map<Long, DaveDecryptor>) mapField.get(mgr);
+            int version = 1;
+            try {
+                Field v = DaveSessionManager.class.getDeclaredField("currentProtocolVersion");
+                v.setAccessible(true);
+                version = v.getInt(mgr);
+            } catch (ReflectiveOperationException ignored) {
+            }
+            return "dave protocolVersion=" + version + " decryptors=" + decryptors.keySet();
+        } catch (ReflectiveOperationException e) {
+            return "dave reflect fail: " + e.getMessage();
         }
     }
 

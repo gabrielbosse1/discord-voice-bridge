@@ -9,7 +9,6 @@ import net.dv8tion.jda.api.JDABuilder;
 import net.dv8tion.jda.api.audio.AudioModuleConfig;
 import net.dv8tion.jda.api.audio.AudioReceiveHandler;
 import net.dv8tion.jda.api.audio.AudioSendHandler;
-import net.dv8tion.jda.api.audio.CombinedAudio;
 import net.dv8tion.jda.api.audio.UserAudio;
 import net.dv8tion.jda.api.entities.Guild;
 import net.dv8tion.jda.api.entities.channel.concrete.VoiceChannel;
@@ -23,14 +22,17 @@ import org.slf4j.LoggerFactory;
 
 import java.nio.ByteBuffer;
 import java.util.EnumSet;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 
 /**
  * Headless Discord bot. Joins the configured voice channel and bridges PCM audio
  * in both directions:
  * <ul>
- *   <li>Discord -> Minecraft: combined stereo PCM is converted to mono and handed to
- *       the SVC side via the callback set with {@link #setMonoPcmHandler(Consumer)}.</li>
+ *   <li>Discord -> Minecraft: every sender's post-DAVE opus is decoded and mixed
+ *       by {@link AudioHealth} (which also logs the per-sender health report) and
+ *       the summed mono is handed to the SVC side via the callback set with
+ *       {@link #setMonoPcmHandler(Consumer)}.</li>
  *   <li>Minecraft -> Discord: stereo PCM frames are enqueued via
  *       {@link #playToDiscord(short[])} and drained by the JDA send handler.</li>
  * </ul>
@@ -58,6 +60,48 @@ public class DiscordBotManager {
     private final java.util.concurrent.atomic.AtomicLong providedFrames = new java.util.concurrent.atomic.AtomicLong();
     private volatile long lastProvidedLogMs = 0;
 
+    // DAVE recovery: a sender that keeps delivering post-DAVE frames but never
+    // opus-decodes it has a stuck MLS key-generation in the native libdave
+    // session ("no valid cryptor" / MISSING_KEY_RATCHET) - a known upstream
+    // libdave/JDA limitation. The native DAVE/MLS session is created once per
+    // AudioConnection and REUSED across JDA in-band reconnects, so the stuck
+    // state survives them (verified live: the sender stayed at 0 decoded after a
+    // close+open). The only thing that re-syncs it is a brand-new JDA, which
+    // builds a fresh AudioConnection -> fresh DAVE/MLS session that processes the
+    // current group epoch from scratch. We force that, capped + cooled-down so
+    // it cannot loop and disrupt both directions unboundedly.
+    private static final int DAVE_BAD_WINDOW_MIN_POST = 25;      // post-DAVE frames per 10 s to call a sender "active"
+    private static final int DAVE_BAD_WINDOWS_TO_RESTART = 3;    // consecutive active-but-undecoded 10 s windows (~30 s)
+    private static final long DAVE_RESTART_COOLDOWN_MS = 90_000;
+    private static final int DAVE_MAX_RESTARTS = 2;
+    private final java.util.Map<Long, Integer> daveBadWindows = new java.util.concurrent.ConcurrentHashMap<>();
+    // Senders that decoded at least once in this JDA session. A sender that was
+    // healthy and then went active-but-undecoded is a REGRESSION (a real MLS
+    // epoch-transition gap) that a fresh DAVE/MLS session heals. A sender that
+    // was never decodable (e.g. a music bot whose E2EE key-generation libdave
+    // cannot build) is NOT a regression: a restart does not help it (verified
+    // live) and would only drop every other speaker, so it is left alone.
+    private final java.util.Set<Long> daveEverHealthy = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    private final java.util.concurrent.atomic.AtomicInteger daveRestarts = new java.util.concurrent.atomic.AtomicInteger();
+    private volatile long lastDaveRestartMs = 0;
+    private volatile boolean daveCapLogged = false;
+    private final java.util.concurrent.ScheduledExecutorService reconnecter =
+            java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -> {
+                Thread t = new Thread(r, "dvc-dave-reconnect");
+                t.setDaemon(true);
+                return t;
+            });
+    private final Object reconnectLock = new Object();
+    private volatile boolean sessionDescLogged = false;
+    // Per-session audio path + health monitor: decodes every sender's post-DAVE
+    // opus with a 120 ms frame size (JDA's 20 ms decoder drops long music frames)
+    // and reports per-sender packet rate / volume / pitch / errors every 5 s.
+    private volatile AudioHealth audioHealth;
+    // Bumped by a real stop() and by each DAVE restart; the delayed restart
+    // start() only proceeds if it is still the current session, so a server
+    // shutdown or a newer restart cannot be clobbered by a stale resume.
+    private final java.util.concurrent.atomic.AtomicLong instanceId = new java.util.concurrent.atomic.AtomicLong();
+
     public DiscordBotManager(DiscordVoiceBridgeConfig config) {
         this.config = config;
     }
@@ -80,6 +124,7 @@ public class DiscordBotManager {
         long[] c = audioDiag.computeIfAbsent(userId, k -> new long[2]);
         if (decoded > 0) {
             c[1] += decoded;      // frames successfully opus-decoded
+            daveEverHealthy.add(userId); // DAVE is working for this sender right now
         } else {
             c[0]++;               // frames that reached the opus decoder
         }
@@ -91,9 +136,112 @@ public class DiscordBotManager {
                 sb.append(String.format(" | %s: %d/%d", e.getKey(), e.getValue()[1], e.getValue()[0]));
             }
             LOGGER.info(sb.toString());
+            if (!sessionDescLogged) {
+                sessionDescLogged = true;
+                LegacyAudioPassthrough p = legacyPassthrough;
+                if (p != null) {
+                    LOGGER.info("DAVE session: {}", p.describeSession());
+                }
+            }
+            evaluateDaveRecovery();
             // keep only the recent window so the map does not grow per speaker
             audioDiag.clear();
         }
+    }
+
+    /**
+     * DAVE recovery: a sender that is actively delivering post-DAVE frames but
+     * never opus-decodes it has a stuck MLS key-generation in the native libdave
+     * session. After a few consecutive such 10 s windows, restart the whole JDA
+     * so a brand-new DAVE/MLS session re-syncs the generation. A healthy window
+     * (nobody stuck) resets the restart budget.
+     */
+    private void evaluateDaveRecovery() {
+        int offenders = 0;
+        for (java.util.Map.Entry<Long, long[]> e : audioDiag.entrySet()) {
+            long userId = e.getKey();
+            long post = e.getValue()[0];   // post-DAVE frames this window
+            long dec = e.getValue()[1];    // opus-decoded this window
+            if (post >= DAVE_BAD_WINDOW_MIN_POST && dec == 0) {
+                // Only a REGRESSION is recoverable: this sender decoded earlier
+                // this session and now stopped. A never-decodable sender (a
+                // bot libdave can't decrypt) is left alone - a restart does not
+                // help it and would drop every other speaker.
+                if (!daveEverHealthy.contains(userId)) {
+                    continue;
+                }
+                Integer bad = daveBadWindows.merge(userId, 1, Integer::sum);
+                if (bad != null && bad >= DAVE_BAD_WINDOWS_TO_RESTART) {
+                    offenders++;
+                }
+            } else {
+                daveBadWindows.remove(userId);
+            }
+        }
+        if (offenders > 0) {
+            scheduleDaveRestart(offenders);
+        } else if (!daveBadWindows.isEmpty()) {
+            // No active failure right now: clear the budget so a future,
+            // unrelated stuck generation still gets a recovery chance.
+            daveBadWindows.clear();
+            daveRestarts.set(0);
+        }
+    }
+
+    private void scheduleDaveRestart(int offenders) {
+        synchronized (reconnectLock) {
+            long now = System.currentTimeMillis();
+            if (now - lastDaveRestartMs < DAVE_RESTART_COOLDOWN_MS) {
+                return; // still cooling down; the counter keeps accruing and fires again after
+            }
+            if (daveRestarts.get() >= DAVE_MAX_RESTARTS) {
+                if (!daveCapLogged) {
+                    daveCapLogged = true;
+                    LOGGER.warn("DAVE recovery: restart cap ({}) reached; a fresh DAVE/MLS session did not clear "
+                            + "the stuck key-generation, so this sender needs an upstream libdave/JDA fix or a "
+                            + "full server restart. Offender(s): {}", DAVE_MAX_RESTARTS, offenders);
+                }
+                return;
+            }
+            lastDaveRestartMs = now;
+            int n = daveRestarts.incrementAndGet();
+            daveBadWindows.clear(); // re-arm after the restart
+            LOGGER.warn("DAVE key-generation stuck for {} active sender(s) over ~{} s; restarting JDA to build "
+                    + "a fresh DAVE/MLS session ({} of {})", offenders, DAVE_BAD_WINDOWS_TO_RESTART * 10, n, DAVE_MAX_RESTARTS);
+        }
+        reconnecter.execute(this::restartJda);
+    }
+
+    /**
+     * Shuts the whole bot down and starts it again. A JDA rebuild creates a new
+     * AudioConnection, whose constructor builds a fresh native DAVE/MLS session
+     * that re-processes the current group epoch from scratch - the only thing
+     * that clears the stuck libdave key-generation (an in-band voice reconnect
+     * reuses the existing DAVE session and was verified not to help).
+     */
+    private void restartJda() {
+        if (jda == null) {
+            return;
+        }
+        long token = instanceId.get(); // do NOT bump: this is our own teardown, not a real stop
+        try {
+            teardownBot();           // running=false, JDA.shutdownNow(), passthrough.close()
+        } catch (Exception e) {
+            LOGGER.error("DAVE recovery: shutdown failed: {}", e.getMessage(), e);
+        }
+        reconnecter.schedule(() -> {
+            // Only resume if nobody stopped us (server shutdown / newer restart)
+            // in the teardown window.
+            if (instanceId.get() != token) {
+                return;
+            }
+            try {
+                start();             // rebuilds JDA + passthrough, running=true
+            } catch (Exception e) {
+                LOGGER.error("DAVE recovery: JDA restart failed: {}", e.getMessage(), e);
+                running = true;      // don't get stuck not-running
+            }
+        }, 4, TimeUnit.SECONDS);
     }
 
     /**
@@ -119,6 +267,20 @@ public class DiscordBotManager {
 
         running = true;
         LOGGER.info(Lang.get("discord_voice_bridge.startup.starting"));
+        // Fresh JDA session: forget per-session DAVE recovery state (the
+        // "ever healthy" set and the restart budget belong to one session).
+        daveEverHealthy.clear();
+        daveBadWindows.clear();
+        daveRestarts.set(0);
+        daveCapLogged = false;
+        sessionDescLogged = false;
+        AudioHealth health = audioHealth;
+        if (health != null) {
+            health.close();
+        }
+        // Reads the volatile handler on every frame: SVC installs its sink
+        // independently of JDA start/stop order.
+        audioHealth = new AudioHealth(mono -> monoPcmHandler.accept(mono));
         // Discord enforces E2EE/DAVE encrypted voice: the audio module must
         // carry a DAVE session factory (jdave) or the voice server closes the
         // connection with "E2EE/DAVE protocol required" in a reconnect loop.
@@ -141,7 +303,7 @@ public class DiscordBotManager {
                                 if (passthrough != null) {
                                     passthrough.bindSession(s);
                                 }
-                                return s;
+                                return DaveSessionTapper.wrap(s);
                             }
                         }))
                 .build();
@@ -191,7 +353,11 @@ public class DiscordBotManager {
         manager.setReceivingHandler(new AudioReceiveHandler() {
             @Override
             public boolean canReceiveCombined() {
-                return true;
+                // Audio is mixed in AudioHealth (own 120 ms-capable decoder + 20 ms
+                // timer), so JDA's fixed-20 ms combined stream is not consumed.
+                // canReceiveUser stays true: LegacyAudioPassthrough observes
+                // JDA's per-user decode success (noteDecoded) via handleUserAudio.
+                return false;
             }
 
             @Override
@@ -212,6 +378,10 @@ public class DiscordBotManager {
                     p.notePacket(userId);
                 }
                 countAudioDiag(userId, 0);
+                AudioHealth h = audioHealth;
+                if (h != null) {
+                    h.onPacket(userId, packet.getSSRC(), packet.getOpusAudio());
+                }
                 byte[] payload = packet.getOpusAudio();
                 if (payload != null && payload.length > 0) {
                     if (firstPayload.putIfAbsent(userId,
@@ -237,22 +407,14 @@ public class DiscordBotManager {
                     }
                 }
                 try {
-                    countAudioDiag(Long.parseLong(userAudio.getUser().getId()), 1);
+                    long userId = Long.parseLong(userAudio.getUser().getId());
+                    countAudioDiag(userId, 1);
+                    AudioHealth h = audioHealth;
+                    if (h != null) {
+                        h.onJdaDecoded(userId);
+                    }
                 } catch (NumberFormatException ignored) {
                 }
-            }
-
-            @Override
-            public void handleCombinedAudio(CombinedAudio combined) {
-                if (!running) {
-                    return;
-                }
-                byte[] pcm = combined.getAudioData(1.0); // big-endian stereo PCM
-                short[] stereo = new short[pcm.length / 2];
-                for (int i = 0; i < stereo.length; i++) {
-                    stereo[i] = (short) ((pcm[i * 2] << 8) | (pcm[i * 2 + 1] & 0xFF));
-                }
-                monoPcmHandler.accept(AudioPipeline.stereoToMono(stereo));
             }
         });
         manager.setSendingHandler(new AudioSendHandler() {
@@ -282,6 +444,13 @@ public class DiscordBotManager {
     }
 
     public void stop() {
+        // A real stop (server shutdown / admin disable): tear down and bump the
+        // instance token so any pending DAVE-recovery resume aborts.
+        teardownBot();
+        instanceId.incrementAndGet();
+    }
+
+    private void teardownBot() {
         running = false;
         JDA self = jda;
         jda = null;
@@ -295,6 +464,11 @@ public class DiscordBotManager {
         legacyPassthrough = null;
         if (passthrough != null) {
             passthrough.close();
+        }
+        AudioHealth health = audioHealth;
+        audioHealth = null;
+        if (health != null) {
+            health.close();
         }
     }
 

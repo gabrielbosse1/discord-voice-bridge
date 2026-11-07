@@ -9,6 +9,9 @@ logs/
 out/
 classes/
 
+# JDA test-suite artifact (DTOs written to a dir named after a stream object)
+System.IO.MemoryStream/
+
 # SVC jar is not redistributable; every dev provides their own copy (see README)
 libs/*.jar
 
