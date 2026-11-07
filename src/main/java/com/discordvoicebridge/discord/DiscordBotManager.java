@@ -10,6 +10,7 @@ import net.dv8tion.jda.api.audio.AudioModuleConfig;
 import net.dv8tion.jda.api.audio.AudioReceiveHandler;
 import net.dv8tion.jda.api.audio.AudioSendHandler;
 import net.dv8tion.jda.api.audio.CombinedAudio;
+import net.dv8tion.jda.api.audio.UserAudio;
 import net.dv8tion.jda.api.entities.Guild;
 import net.dv8tion.jda.api.entities.channel.concrete.VoiceChannel;
 import net.dv8tion.jda.api.managers.AudioManager;
@@ -42,6 +43,15 @@ public class DiscordBotManager {
     private final DiscordVoiceBridgeConfig config;
     private final AudioPipeline.StereoFrameQueue sendQueue = new AudioPipeline.StereoFrameQueue(100);
     private LegacyAudioPassthrough legacyPassthrough;
+    // Diagnostic: per-sender counts of post-DAVE frames vs successfully
+    // opus-decoded frames, logged every 10 s, so JDA's user-less
+    // "Decoder failed to decode" line can be attributed to a sender.
+    private final java.util.Map<Long, long[]> audioDiag = new java.util.concurrent.ConcurrentHashMap<>();
+    private volatile long lastAudioDiagLogMs = 0;
+    // First captured post-DAVE payload per user (once per boot): tells us
+    // whether the bytes that reach opus are decrypted audio or still a raw
+    // DAVE/transport envelope (leading 0xff...).
+    private final java.util.Map<Long, byte[]> firstPayload = new java.util.concurrent.ConcurrentHashMap<>();
     private volatile Consumer<short[]> monoPcmHandler = mono -> { };
     private volatile boolean running = false;
     private volatile JDA jda;
@@ -63,6 +73,27 @@ public class DiscordBotManager {
             return;
         }
         sendQueue.offer(AudioPipeline.stereoToFrame(stereoPcm));
+    }
+
+    /** Diagnostic: count one post-DAVE opus packet (decoded=0) or one opus success (decoded=1). */
+    private void countAudioDiag(long userId, int decoded) {
+        long[] c = audioDiag.computeIfAbsent(userId, k -> new long[2]);
+        if (decoded > 0) {
+            c[1] += decoded;      // frames successfully opus-decoded
+        } else {
+            c[0]++;               // frames that reached the opus decoder
+        }
+        long now = System.currentTimeMillis();
+        if (now - lastAudioDiagLogMs > 10_000) {
+            lastAudioDiagLogMs = now;
+            StringBuilder sb = new StringBuilder("Audio per-sender (opus-decoded / post-DAVE frames):");
+            for (java.util.Map.Entry<Long, long[]> e : audioDiag.entrySet()) {
+                sb.append(String.format(" | %s: %d/%d", e.getKey(), e.getValue()[1], e.getValue()[0]));
+            }
+            LOGGER.info(sb.toString());
+            // keep only the recent window so the map does not grow per speaker
+            audioDiag.clear();
+        }
     }
 
     /**
@@ -161,6 +192,54 @@ public class DiscordBotManager {
             @Override
             public boolean canReceiveCombined() {
                 return true;
+            }
+
+            @Override
+            public boolean canReceiveUser() {
+                return true;
+            }
+
+            @Override
+            public boolean canReceiveEncoded() {
+                return true;
+            }
+
+            @Override
+            public void handleEncodedAudio(net.dv8tion.jda.api.audio.OpusPacket packet) {
+                long userId = packet.getUserId();
+                LegacyAudioPassthrough p = legacyPassthrough;
+                if (p != null) {
+                    p.notePacket(userId);
+                }
+                countAudioDiag(userId, 0);
+                byte[] payload = packet.getOpusAudio();
+                if (payload != null && payload.length > 0) {
+                    if (firstPayload.putIfAbsent(userId,
+                            java.util.Arrays.copyOf(payload, Math.min(payload.length, 16))) == null) {
+                        byte[] sample = firstPayload.get(userId);
+                        StringBuilder hex = new StringBuilder();
+                        for (byte b : sample) {
+                            hex.append(String.format("%02x", b));
+                        }
+                        LOGGER.info("Audio first payload for user {}: ssrc={} len={} head={}",
+                                userId, packet.getSSRC(), payload.length, hex);
+                    }
+                }
+            }
+
+            @Override
+            public void handleUserAudio(UserAudio userAudio) {
+                LegacyAudioPassthrough p = legacyPassthrough;
+                if (p != null) {
+                    try {
+                        p.noteDecoded(Long.parseLong(userAudio.getUser().getId()));
+                    } catch (NumberFormatException ignored) {
+                    }
+                }
+                try {
+                    countAudioDiag(Long.parseLong(userAudio.getUser().getId()), 1);
+                } catch (NumberFormatException ignored) {
+                }
             }
 
             @Override
