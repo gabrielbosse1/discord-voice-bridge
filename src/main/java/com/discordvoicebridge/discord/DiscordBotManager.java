@@ -503,12 +503,17 @@ public class DiscordBotManager {
         if (guilds.isEmpty()) {
             return out;
         }
+        // Never list our own bot: it sits in the channel too and has no audio.
+        long selfId = self.getSelfUser().getIdLong();
         for (net.dv8tion.jda.api.entities.GuildVoiceState vs : guilds.get(0).getVoiceStates()) {
             if (vs.getChannel() == null || !vs.getChannel().getId().equals(channelId)) {
                 continue;
             }
             net.dv8tion.jda.api.entities.Member member = vs.getMember();
             net.dv8tion.jda.api.entities.User user = member.getUser();
+            if (user.getIdLong() == selfId) {
+                continue;
+            }
             String nick = member.getNickname();
             String global = user.getGlobalName();
             String display = (nick != null && !nick.isBlank()) ? nick
@@ -518,26 +523,17 @@ public class DiscordBotManager {
         return out;
     }
 
-    /** Sorted unique user names (not nicknames) for brigadier autocomplete. */
-    public List<String> voiceUsernames() {
-        List<String> out = new ArrayList<>();
-        for (SenderInfo s : voiceUsers()) {
-            out.add(s.username());
-        }
-        out.sort(String.CASE_INSENSITIVE_ORDER);
-        return out;
-    }
-
     /**
-     * Resolves a user name (case-insensitive, exact) to a Discord user id, or
-     * null. Used by /dvc to target a sender.
+     * Resolves a user name (case-insensitive, exact - display name or original
+     * username) to a Discord user id, or null. Used by /dvc to target a sender.
      */
-    public Long resolveUsername(String name) {
+    public Long resolveName(String name) {
         if (name == null || name.isBlank()) {
             return null;
         }
+        String n = name.trim();
         for (SenderInfo s : voiceUsers()) {
-            if (s.username().equalsIgnoreCase(name.trim())) {
+            if (s.displayName().equalsIgnoreCase(n) || s.username().equalsIgnoreCase(n)) {
                 return s.id();
             }
         }

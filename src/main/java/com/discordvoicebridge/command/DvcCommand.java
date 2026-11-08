@@ -2,20 +2,13 @@ package com.discordvoicebridge.command;
 
 import com.discordvoicebridge.DiscordVoiceBridgeMod;
 import com.discordvoicebridge.Lang;
-import com.discordvoicebridge.config.DiscordVoiceBridgeConfig;
 import com.discordvoicebridge.discord.DiscordBotManager;
-
-import me.lucko.fabric.api.permissions.v0.Permissions;
 
 import com.mojang.brigadier.CommandDispatcher;
 import com.mojang.brigadier.arguments.FloatArgumentType;
-import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
-import com.mojang.brigadier.builder.RequiredArgumentBuilder;
 import com.mojang.brigadier.context.CommandContext;
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
-import com.mojang.brigadier.suggestion.SuggestionProvider;
-import com.mojang.brigadier.suggestion.SuggestionsBuilder;
 
 import net.minecraft.ChatFormatting;
 import net.minecraft.commands.CommandSourceStack;
@@ -26,7 +19,6 @@ import net.minecraft.network.chat.HoverEvent;
 import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.network.chat.Style;
 import net.minecraft.server.level.ServerPlayer;
-import net.minecraft.server.permissions.PermissionLevel;
 
 import java.util.List;
 import java.util.UUID;
@@ -41,11 +33,12 @@ import static net.minecraft.commands.Commands.literal;
  * occupants, each with a coloured status dot (green unmuted, red muted-for-you,
  * yellow not heard) and clickable buttons that adjust <b>this player's</b> mute
  * and volume per Discord user. The buttons and the {@code mute/unmute/volume/
- * reset} subcommands are equivalent; the subcommands take the Discord username
- * with autocomplete, so everything is controllable without clicking.
+ * reset} subcommands are equivalent; the subcommands take the Discord display
+ * name (double-quoted when it has spaces) or the original username, with
+ * autocomplete, so everything is controllable without clicking.
  *
  * <p>The admin {@code config} panel is registered under the same tree by
- * {@link ConfigCommand#registerConfig}.</p>
+ * {@link ConfigCommand#configSubtree()}.</p>
  */
 public class DvcCommand {
 
@@ -55,17 +48,6 @@ public class DvcCommand {
     private static final char DOT_YELLOW = '\uE002';
     private static final char RING = '\uE003';
 
-    private static final SuggestionProvider<CommandSourceStack> USER_AUTOCOMPLETE =
-            (ctx, builder) -> {
-                DiscordBotManager bot = DiscordVoiceBridgeMod.getDiscordBot();
-                if (bot != null) {
-                    for (String name : bot.voiceUsernames()) {
-                        builder.suggest(name);
-                    }
-                }
-                return builder.buildFuture();
-            };
-
     public static void register(CommandDispatcher<CommandSourceStack> dispatcher,
                                 Commands.CommandSelection selection) {
         if (selection != Commands.CommandSelection.DEDICATED) {
@@ -74,16 +56,17 @@ public class DvcCommand {
         dispatcher.register(LiteralArgumentBuilder.<CommandSourceStack>literal("dvc")
                 .executes(DvcCommand::menu)
                 .then(literal("list").executes(DvcCommand::menu))
-                .then(literal("mute").then(argument("user", StringArgumentType.word())
-                        .suggests(USER_AUTOCOMPLETE).executes(DvcCommand::mute)))
-                .then(literal("unmute").then(argument("user", StringArgumentType.word())
-                        .suggests(USER_AUTOCOMPLETE).executes(DvcCommand::unmute)))
+                .then(literal("mute").then(argument("user", DvcUserArgument.USER)
+                        .suggests(DvcUserArgument.suggestions()).executes(DvcCommand::mute)))
+                .then(literal("unmute").then(argument("user", DvcUserArgument.USER)
+                        .suggests(DvcUserArgument.suggestions()).executes(DvcCommand::unmute)))
                 .then(literal("volume")
-                        .then(argument("user", StringArgumentType.word()).suggests(USER_AUTOCOMPLETE)
+                        .then(argument("user", DvcUserArgument.USER)
+                                .suggests(DvcUserArgument.suggestions())
                                 .then(argument("percent", FloatArgumentType.floatArg(0f, 200f))
                                         .executes(DvcCommand::volume))))
-                .then(literal("reset").then(argument("user", StringArgumentType.word())
-                        .suggests(USER_AUTOCOMPLETE).executes(DvcCommand::reset)))
+                .then(literal("reset").then(argument("user", DvcUserArgument.USER)
+                        .suggests(DvcUserArgument.suggestions()).executes(DvcCommand::reset)))
                 .then(ConfigCommand.configSubtree()));
     }
 
@@ -95,50 +78,19 @@ public class DvcCommand {
             return 0;
         }
         DiscordBotManager bot = DiscordVoiceBridgeMod.getDiscordBot();
-        DiscordVoiceBridgeConfig cfg = DiscordVoiceBridgeMod.getConfig();
         List<DiscordBotManager.SenderInfo> users = bot != null ? bot.voiceUsers() : List.of();
 
         player.sendSystemMessage(Component.literal(Lang.get("discord_voice_bridge.menu.title"))
                 .withStyle(Style.EMPTY.withColor(ChatFormatting.GOLD).withBold(true)));
-        if (bot == null || !bot.isRunning()) {
-            player.sendSystemMessage(Component.literal(Lang.get("discord_voice_bridge.menu.offline"))
-                    .withStyle(Style.EMPTY.withColor(ChatFormatting.RED)));
-        } else {
-            player.sendSystemMessage(Component.literal(
-                    Lang.get("discord_voice_bridge.menu.online",
-                            cfg != null ? cfg.getGroupName() : ""))
-                    .withStyle(Style.EMPTY.withColor(ChatFormatting.GREEN)));
-        }
         if (users.isEmpty()) {
             player.sendSystemMessage(Component.literal(Lang.get("discord_voice_bridge.menu.no_users"))
                     .withStyle(Style.EMPTY.withColor(ChatFormatting.GRAY)));
         } else {
-            player.sendSystemMessage(Component.literal(
-                            Lang.get("discord_voice_bridge.menu.discord_users", users.size()))
-                    .withStyle(Style.EMPTY.withColor(ChatFormatting.AQUA)));
             for (DiscordBotManager.SenderInfo u : users) {
                 sendSystemMenuLine(u, bot, player);
             }
         }
-        player.sendSystemMessage(Component.literal(Lang.get("discord_voice_bridge.menu.instruction"))
-                .withStyle(Style.EMPTY.withColor(ChatFormatting.GRAY)));
-        player.sendSystemMessage(legend());
-        if (bot != null && bot.isRunning()) {
-            player.sendSystemMessage(configButton());
-        }
         return 1;
-    }
-
-    private static Component legend() {
-        return Component.literal(Lang.get("discord_voice_bridge.menu.color_legend",
-                        String.valueOf(DOT_GREEN), String.valueOf(DOT_RED), String.valueOf(DOT_YELLOW)))
-                .withStyle(Style.EMPTY.withColor(ChatFormatting.GRAY));
-    }
-
-    private static Component configButton() {
-        String label = Lang.get("discord_voice_bridge.menu.btn_config");
-        return button(label, "/dvc config",
-                Lang.get("discord_voice_bridge.menu.hover_config"), ChatFormatting.GRAY);
     }
 
     /**
@@ -181,11 +133,8 @@ public class DvcCommand {
                 .withStyle(Style.EMPTY.withColor(ChatFormatting.WHITE)));
         // The original Discord username (no spaces) is what /dvc commands and
         // autocomplete use - shown so it can be copied/typed even when the
-        // display name has spaces.
-        row = row.append(Component.literal(" (" + u.username() + ")")
-                .withStyle(Style.EMPTY.withColor(ChatFormatting.DARK_GRAY)
-                        .withHoverEvent(new HoverEvent.ShowText(Component.literal(
-                                Lang.get("discord_voice_bridge.menu.hover_username", u.username()))))));
+        // display name has spaces. The hover shows the exact command form.
+        row = row.append(userHover(u));
         if (u.bot()) {
             row = row.append(Component.literal(Lang.get("discord_voice_bridge.menu.bot_suffix"))
                     .withStyle(Style.EMPTY.withColor(ChatFormatting.GRAY)));
@@ -196,21 +145,23 @@ public class DvcCommand {
             row = row.append(Component.literal("  " + (int) Math.round(vol * 100) + "%")
                     .withStyle(Style.EMPTY.withColor(ChatFormatting.GOLD)));
         }
-        // Buttons (right side).
+        // Buttons (right side). Display name is what the user sees; it is
+        // double-quoted when it has spaces so the click command parses.
+        String cmdUser = DvcUserArgument.cmdName(u.displayName());
         row = row.append(button(mutedByMe ? Lang.get("discord_voice_bridge.menu.btn_unmute")
                         : Lang.get("discord_voice_bridge.menu.btn_mute"),
-                "/dvc " + (mutedByMe ? "unmute" : "mute") + " " + u.username(),
+                "/dvc " + (mutedByMe ? "unmute" : "mute") + " " + cmdUser,
                 mutedByMe ? Lang.get("discord_voice_bridge.menu.hover_muted_on")
                         : Lang.get("discord_voice_bridge.menu.hover_muted_off"),
                 mutedByMe ? ChatFormatting.GREEN : ChatFormatting.RED));
         int pct = (int) Math.round(vol * 100);
-        row = row.append(button(" -10%", "/dvc volume " + u.username() + " " + Math.max(0, pct - 10),
+        row = row.append(button(" -10%", "/dvc volume " + cmdUser + " " + Math.max(0, pct - 10),
                 Lang.get("discord_voice_bridge.menu.hover_vol_down"), ChatFormatting.YELLOW));
-        row = row.append(button(" +10%", "/dvc volume " + u.username() + " " + Math.min(200, pct + 10),
+        row = row.append(button(" +10%", "/dvc volume " + cmdUser + " " + Math.min(200, pct + 10),
                 Lang.get("discord_voice_bridge.menu.hover_vol_up"), ChatFormatting.YELLOW));
         if (overridden) {
             row = row.append(button(Lang.get("discord_voice_bridge.menu.btn_reset"),
-                    "/dvc reset " + u.username(), Lang.get("discord_voice_bridge.menu.hover_reset"),
+                    "/dvc reset " + cmdUser, Lang.get("discord_voice_bridge.menu.hover_reset"),
                     ChatFormatting.GRAY));
         }
         player.sendSystemMessage(row);
@@ -223,6 +174,15 @@ public class DvcCommand {
                         .withHoverEvent(new HoverEvent.ShowText(Component.literal(hover))));
     }
 
+    /** The gray "(username)" part of a row, with the exact command form on hover. */
+    private static Component userHover(DiscordBotManager.SenderInfo u) {
+        String commandForm = DvcUserArgument.cmdName(u.displayName());
+        String hover = Lang.get("discord_voice_bridge.menu.hover_username", commandForm);
+        HoverEvent show = new HoverEvent.ShowText(Component.literal(hover));
+        Style style = Style.EMPTY.withColor(ChatFormatting.DARK_GRAY).withHoverEvent(show);
+        return Component.literal(" (" + u.username() + ")").withStyle(style);
+    }
+
     // ----- subcommands -----
 
     private static int mute(CommandContext<CommandSourceStack> ctx) {
@@ -230,9 +190,9 @@ public class DvcCommand {
         if (player == null) {
             return 0;
         }
-        String name = StringArgumentType.getString(ctx, "user");
+        String name = ctx.getArgument("user", String.class);
         DiscordBotManager bot = DiscordVoiceBridgeMod.getDiscordBot();
-        Long id = bot != null ? bot.resolveUsername(name) : null;
+        Long id = bot != null ? bot.resolveName(name) : null;
         if (id == null) {
             return unknownUser(player, name);
         }
@@ -248,9 +208,9 @@ public class DvcCommand {
         if (player == null) {
             return 0;
         }
-        String name = StringArgumentType.getString(ctx, "user");
+        String name = ctx.getArgument("user", String.class);
         DiscordBotManager bot = DiscordVoiceBridgeMod.getDiscordBot();
-        Long id = bot != null ? bot.resolveUsername(name) : null;
+        Long id = bot != null ? bot.resolveName(name) : null;
         if (id == null) {
             return unknownUser(player, name);
         }
@@ -266,14 +226,14 @@ public class DvcCommand {
         if (player == null) {
             return 0;
         }
-        String name = StringArgumentType.getString(ctx, "user");
+        String name = ctx.getArgument("user", String.class);
         float percent = FloatArgumentType.getFloat(ctx, "percent");
         if (percent < 0f || percent > 200f) {
             player.sendSystemMessage(msg(Lang.get("discord_voice_bridge.bad_volume"), ChatFormatting.RED));
             return 0;
         }
         DiscordBotManager bot = DiscordVoiceBridgeMod.getDiscordBot();
-        Long id = bot != null ? bot.resolveUsername(name) : null;
+        Long id = bot != null ? bot.resolveName(name) : null;
         if (id == null) {
             return unknownUser(player, name);
         }
@@ -290,9 +250,9 @@ public class DvcCommand {
         if (player == null) {
             return 0;
         }
-        String name = StringArgumentType.getString(ctx, "user");
+        String name = ctx.getArgument("user", String.class);
         DiscordBotManager bot = DiscordVoiceBridgeMod.getDiscordBot();
-        Long id = bot != null ? bot.resolveUsername(name) : null;
+        Long id = bot != null ? bot.resolveName(name) : null;
         if (id == null) {
             return unknownUser(player, name);
         }
