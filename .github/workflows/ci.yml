@@ -8,6 +8,8 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
 
@@ -29,8 +31,19 @@ jobs:
       - name: Build and test
         run: ./gradlew clean test build --no-daemon
 
-      - name: Upload release jar
-        uses: actions/upload-artifact@v4
+      # Every successful main build replaces the jar in the `latest` release,
+      # so the newest version is always one download away (CI artifacts only
+      # live 90 days). PRs do not publish.
+      - name: Publish release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
         with:
-          name: discord-voice-bridge
-          path: build/libs/discord_voice_bridge-1.0.0.jar
+          tag_name: latest
+          name: discord_voice_bridge 1.0.0
+          body: |
+            Latest build of `main` (commit ${{ github.sha }}).
+
+            Drop `discord_voice_bridge-1.0.0.jar` into your server's `mods/`
+            folder. Requires Minecraft 26.3, Fabric, and Simple Voice Chat.
+          files: build/libs/discord_voice_bridge-1.0.0.jar
+          fail_on_unmatched_files: true
