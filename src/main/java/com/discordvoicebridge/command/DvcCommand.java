@@ -179,6 +179,13 @@ public class DvcCommand {
                 .withStyle(Style.EMPTY.withColor(statusColor));
         row = row.append(Component.literal(" " + u.displayName())
                 .withStyle(Style.EMPTY.withColor(ChatFormatting.WHITE)));
+        // The original Discord username (no spaces) is what /dvc commands and
+        // autocomplete use - shown so it can be copied/typed even when the
+        // display name has spaces.
+        row = row.append(Component.literal(" (" + u.username() + ")")
+                .withStyle(Style.EMPTY.withColor(ChatFormatting.DARK_GRAY)
+                        .withHoverEvent(new HoverEvent.ShowText(Component.literal(
+                                Lang.get("discord_voice_bridge.menu.hover_username", u.username()))))));
         if (u.bot()) {
             row = row.append(Component.literal(Lang.get("discord_voice_bridge.menu.bot_suffix"))
                     .withStyle(Style.EMPTY.withColor(ChatFormatting.GRAY)));
@@ -197,9 +204,9 @@ public class DvcCommand {
                         : Lang.get("discord_voice_bridge.menu.hover_muted_off"),
                 mutedByMe ? ChatFormatting.GREEN : ChatFormatting.RED));
         int pct = (int) Math.round(vol * 100);
-        row = row.append(button(" -10%", "/dvc volume " + u.username() + " " + (pct - 10),
+        row = row.append(button(" -10%", "/dvc volume " + u.username() + " " + Math.max(0, pct - 10),
                 Lang.get("discord_voice_bridge.menu.hover_vol_down"), ChatFormatting.YELLOW));
-        row = row.append(button(" +10%", "/dvc volume " + u.username() + " " + (pct + 10),
+        row = row.append(button(" +10%", "/dvc volume " + u.username() + " " + Math.min(200, pct + 10),
                 Lang.get("discord_voice_bridge.menu.hover_vol_up"), ChatFormatting.YELLOW));
         if (overridden) {
             row = row.append(button(Lang.get("discord_voice_bridge.menu.btn_reset"),
