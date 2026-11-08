@@ -21,7 +21,10 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.nio.ByteBuffer;
+import java.util.ArrayList;
 import java.util.EnumSet;
+import java.util.List;
+import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 
@@ -30,7 +33,7 @@ import java.util.function.Consumer;
  * in both directions:
  * <ul>
  *   <li>Discord -> Minecraft: every sender's post-DAVE opus is decoded and mixed
- *       by {@link AudioHealth} (which also logs the per-sender health report) and
+ *       by {@link DiscordMixer} (which also logs the per-sender health report) and
  *       the summed mono is handed to the SVC side via the callback set with
  *       {@link #setMonoPcmHandler(Consumer)}.</li>
  *   <li>Minecraft -> Discord: stereo PCM frames are enqueued via
@@ -94,9 +97,10 @@ public class DiscordBotManager {
     private final Object reconnectLock = new Object();
     private volatile boolean sessionDescLogged = false;
     // Per-session audio path + health monitor: decodes every sender's post-DAVE
-    // opus with a 120 ms frame size (JDA's 20 ms decoder drops long music frames)
-    // and reports per-sender packet rate / volume / pitch / errors every 5 s.
-    private volatile AudioHealth audioHealth;
+    // opus with a 120 ms frame size (JDA's 20 ms decoder drops long music frames),
+    // mixes all senders, emits one mono frame per 20 ms (plus per-player frames
+    // with personal mute/volume) and reports sender health every 5 s.
+    private volatile DiscordMixer mixer;
     // Bumped by a real stop() and by each DAVE restart; the delayed restart
     // start() only proceeds if it is still the current session, so a server
     // shutdown or a newer restart cannot be clobbered by a stale resume.
@@ -274,13 +278,13 @@ public class DiscordBotManager {
         daveRestarts.set(0);
         daveCapLogged = false;
         sessionDescLogged = false;
-        AudioHealth health = audioHealth;
-        if (health != null) {
-            health.close();
+        DiscordMixer old = mixer;
+        if (old != null) {
+            old.close();
         }
         // Reads the volatile handler on every frame: SVC installs its sink
         // independently of JDA start/stop order.
-        audioHealth = new AudioHealth(mono -> monoPcmHandler.accept(mono));
+        mixer = new DiscordMixer(mono -> monoPcmHandler.accept(mono));
         // Discord enforces E2EE/DAVE encrypted voice: the audio module must
         // carry a DAVE session factory (jdave) or the voice server closes the
         // connection with "E2EE/DAVE protocol required" in a reconnect loop.
@@ -353,7 +357,7 @@ public class DiscordBotManager {
         manager.setReceivingHandler(new AudioReceiveHandler() {
             @Override
             public boolean canReceiveCombined() {
-                // Audio is mixed in AudioHealth (own 120 ms-capable decoder + 20 ms
+                // Audio is mixed in DiscordMixer (own 120 ms-capable decoder + 20 ms
                 // timer), so JDA's fixed-20 ms combined stream is not consumed.
                 // canReceiveUser stays true: LegacyAudioPassthrough observes
                 // JDA's per-user decode success (noteDecoded) via handleUserAudio.
@@ -378,7 +382,7 @@ public class DiscordBotManager {
                     p.notePacket(userId);
                 }
                 countAudioDiag(userId, 0);
-                AudioHealth h = audioHealth;
+                DiscordMixer h = mixer;
                 if (h != null) {
                     h.onPacket(userId, packet.getSSRC(), packet.getOpusAudio());
                 }
@@ -409,7 +413,7 @@ public class DiscordBotManager {
                 try {
                     long userId = Long.parseLong(userAudio.getUser().getId());
                     countAudioDiag(userId, 1);
-                    AudioHealth h = audioHealth;
+                    DiscordMixer h = mixer;
                     if (h != null) {
                         h.onJdaDecoded(userId);
                     }
@@ -465,8 +469,8 @@ public class DiscordBotManager {
         if (passthrough != null) {
             passthrough.close();
         }
-        AudioHealth health = audioHealth;
-        audioHealth = null;
+        DiscordMixer health = mixer;
+        mixer = null;
         if (health != null) {
             health.close();
         }
@@ -474,5 +478,155 @@ public class DiscordBotManager {
 
     public boolean isRunning() {
         return running;
+    }
+
+    // ----- Discord voice-channel introspection (for the /dvc menu) -----
+
+    /** One user currently in the configured Discord voice channel. */
+    public record SenderInfo(long id, String username, String displayName, boolean muted, boolean bot) {
+    }
+
+    /**
+     * All users in the configured voice channel. Display name = nickname when
+     * set, else the global display name, else the username. {@code muted} is
+     * the Discord-side mute (not the personal bridge mute). Empty when the bot
+     * is not running or the channel is unknown.
+     */
+    public List<SenderInfo> voiceUsers() {
+        List<SenderInfo> out = new ArrayList<>();
+        JDA self = jda;
+        if (self == null) {
+            return out;
+        }
+        String channelId = config.getVoiceChannelId();
+        java.util.List<net.dv8tion.jda.api.entities.Guild> guilds = self.getGuilds();
+        if (guilds.isEmpty()) {
+            return out;
+        }
+        for (net.dv8tion.jda.api.entities.GuildVoiceState vs : guilds.get(0).getVoiceStates()) {
+            if (vs.getChannel() == null || !vs.getChannel().getId().equals(channelId)) {
+                continue;
+            }
+            net.dv8tion.jda.api.entities.Member member = vs.getMember();
+            net.dv8tion.jda.api.entities.User user = member.getUser();
+            String nick = member.getNickname();
+            String global = user.getGlobalName();
+            String display = (nick != null && !nick.isBlank()) ? nick
+                    : (global != null && !global.isBlank()) ? global : user.getName();
+            out.add(new SenderInfo(user.getIdLong(), user.getName(), display, vs.isMuted(), user.isBot()));
+        }
+        return out;
+    }
+
+    /** Sorted unique user names (not nicknames) for brigadier autocomplete. */
+    public List<String> voiceUsernames() {
+        List<String> out = new ArrayList<>();
+        for (SenderInfo s : voiceUsers()) {
+            out.add(s.username());
+        }
+        out.sort(String.CASE_INSENSITIVE_ORDER);
+        return out;
+    }
+
+    /**
+     * Resolves a user name (case-insensitive, exact) to a Discord user id, or
+     * null. Used by /dvc to target a sender.
+     */
+    public Long resolveUsername(String name) {
+        if (name == null || name.isBlank()) {
+            return null;
+        }
+        for (SenderInfo s : voiceUsers()) {
+            if (s.username().equalsIgnoreCase(name.trim())) {
+                return s.id();
+            }
+        }
+        return null;
+    }
+
+    /** Display name (nickname, else global name, else username) for a user id, or the id if unknown. */
+    public String displayName(long discordUserId) {
+        for (SenderInfo s : voiceUsers()) {
+            if (s.id() == discordUserId) {
+                return s.displayName();
+            }
+        }
+        return String.valueOf(discordUserId);
+    }
+
+    /** Whether the sender produced a packet within the last 2 s. */
+    public boolean isSpeaking(long discordUserId) {
+        DiscordMixer m = mixer;
+        return m != null && m.isSpeaking(discordUserId);
+    }
+
+    public long lastPacketMs(long discordUserId) {
+        DiscordMixer m = mixer;
+        return m != null ? m.lastPacketMs(discordUserId) : 0;
+    }
+
+    // ----- per-player output (personal mute/volume) -----
+
+    public void registerPlayer(UUID player, Consumer<short[]> sink) {
+        DiscordMixer m = mixer;
+        if (m != null) {
+            m.registerPlayer(player, sink);
+        }
+    }
+
+    public void unregisterPlayer(UUID player) {
+        DiscordMixer m = mixer;
+        if (m != null) {
+            m.unregisterPlayer(player);
+        }
+    }
+
+    public boolean isPlayerRegistered(UUID player) {
+        DiscordMixer m = mixer;
+        return m != null && m.isPlayerRegistered(player);
+    }
+
+    /** True if this player's mute/volume differs from the group default. */
+    public boolean needsPersonalChannel(UUID player) {
+        DiscordMixer m = mixer;
+        return m != null && m.needsPersonalChannel(player);
+    }
+
+    /** Discord user ids this player has a personal mute/volume for (for the menu). */
+    public java.util.Set<Long> overriddenSenders(UUID player) {
+        DiscordMixer m = mixer;
+        return m != null ? m.overriddenSenders(player) : java.util.Set.of();
+    }
+
+    public void setPlayerSenderMuted(UUID player, long senderId, boolean muted) {
+        DiscordMixer m = mixer;
+        if (m != null) {
+            m.setPlayerSenderMuted(player, senderId, muted);
+        }
+    }
+
+    public boolean isPlayerSenderMuted(UUID player, long senderId) {
+        DiscordMixer m = mixer;
+        return m != null && m.isPlayerSenderMuted(player, senderId);
+    }
+
+    public void setPlayerSenderVolume(UUID player, long senderId, float volume) {
+        DiscordMixer m = mixer;
+        if (m != null) {
+            m.setPlayerSenderVolume(player, senderId, volume);
+        }
+    }
+
+    public float getPlayerSenderVolume(UUID player, long senderId) {
+        DiscordMixer m = mixer;
+        return m != null ? m.getPlayerSenderVolume(player, senderId) : 1.0f;
+    }
+
+    /** Clears this player's personal mute and volume for one Discord sender. */
+    public void clearPlayerSender(UUID player, long senderId) {
+        DiscordMixer m = mixer;
+        if (m != null) {
+            m.clearPlayerSender(player, senderId);
+        }
     }
 }

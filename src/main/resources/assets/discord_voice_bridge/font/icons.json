@@ -1,0 +1,13 @@
+{
+  "providers": [
+    {
+      "type": "bitmap",
+      "file": "discord_voice_bridge:font/icons.png",
+      "height": 8,
+      "ascent": 6,
+      "chars": [
+        "\ue000\ue001\ue002\ue003"
+      ]
+    }
+  ]
+}

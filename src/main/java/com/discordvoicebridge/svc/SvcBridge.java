@@ -23,6 +23,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.nio.charset.StandardCharsets;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
@@ -57,8 +58,29 @@ public class SvcBridge implements SvcVoicechatPlugin {
     private StaticAudioChannel channel;
     private OpusEncoder encoder;
     private OpusDecoder decoder;
-    /** Bridge-group members the static channel currently sends to (server thread only). */
+    /** Bridge-group members the shared channel currently sends to (server thread only). */
     private final java.util.Set<UUID> channelTargets = ConcurrentHashMap.newKeySet();
+    /**
+     * Players with a personal mute/volume get their own static channel so the
+     * override affects only them (the shared channel keeps feeding everyone
+     * else with the unmodified mix). One encoder per player because SVC
+     * encoders are stateful. The channel is kept (idle) after a player returns
+     * to the shared mix - the API has no close(), and the count is bounded by
+     * unique players who ever had a personal setting.
+     */
+    private final Map<UUID, Personal> personal = new ConcurrentHashMap<>();
+
+    private static final class Personal {
+        final StaticAudioChannel channel;
+        final OpusEncoder encoder;
+        volatile VoicechatConnection target;
+        volatile boolean registered;
+
+        Personal(StaticAudioChannel channel, OpusEncoder encoder) {
+            this.channel = channel;
+            this.encoder = encoder;
+        }
+    }
 
     // Diagnostics so both directions can be confirmed from the log.
     private final AtomicLong micDecodedFrames = new AtomicLong();
@@ -147,6 +169,7 @@ public class SvcBridge implements SvcVoicechatPlugin {
     public void onServerStopped(MinecraftServer server) {
         channel = null;
         channelTargets.clear();
+        personal.clear();
     }
 
     /**
@@ -221,31 +244,102 @@ public class SvcBridge implements SvcVoicechatPlugin {
     }
 
     /**
-     * Keeps the static channel's targets in sync with bridge-group membership, every
-     * tick (server thread). Only current members are sent Discord audio, so nobody
-     * outside the group hears it and no bot entity has to exist or be tracked.
+     * Keeps the shared channel's targets in sync with bridge-group membership, every
+     * tick (server thread), and routes players who have a personal mute/volume to
+     * their own channel instead (so the override affects only them). Nobody outside
+     * the group hears anything; there is no bot entity to track.
      */
     private void updateChannelTargets(MinecraftServer server) {
         if (channel == null) {
             return;
         }
+        DiscordBotManager bot = DiscordVoiceBridgeMod.getDiscordBot();
         for (ServerPlayer player : server.getPlayerList().getPlayers()) {
-            VoicechatConnection conn = api.getConnectionOf(player.getUUID());
             UUID uuid = player.getUUID();
-            if (conn != null && conn.isInGroup() && conn.getGroup().getId().equals(GROUP_UUID)) {
-                if (channelTargets.add(uuid)) {
-                    channel.addTarget(conn);
+            VoicechatConnection conn = api.getConnectionOf(uuid);
+            boolean inGroup = conn != null && conn.isInGroup()
+                    && conn.getGroup().getId().equals(GROUP_UUID);
+            boolean needPersonal = inGroup && bot != null && bot.needsPersonalChannel(uuid);
+            boolean inShared = channelTargets.contains(uuid);
+
+            if (needPersonal) {
+                if (inShared) {
+                    channelTargets.remove(uuid);
+                    if (conn != null) {
+                        channel.removeTarget(conn);
+                    }
+                }
+                ensurePersonal(uuid, conn, player, bot);
+            } else {
+                stopPersonal(uuid, player, bot);
+                if (inGroup && !inShared) {
+                    channelTargets.add(uuid);
+                    if (conn != null) {
+                        channel.addTarget(conn);
+                    }
                     LOGGER.info("Discord audio now sent to {} (joined the bridge group)",
                             player.getGameProfile().name());
+                } else if (!inGroup && inShared) {
+                    channelTargets.remove(uuid);
+                    if (conn != null) {
+                        channel.removeTarget(conn);
+                    }
+                    LOGGER.info("Discord audio no longer sent to {} (left the bridge group)",
+                            player.getGameProfile().name());
                 }
-            } else if (channelTargets.remove(uuid)) {
-                if (conn != null) {
-                    channel.removeTarget(conn);
-                }
-                LOGGER.info("Discord audio no longer sent to {} (left the bridge group)",
-                        player.getGameProfile().name());
             }
         }
+    }
+
+    /** Creates (once) and points a player's personal channel at them. */
+    private void ensurePersonal(UUID uuid, VoicechatConnection conn, ServerPlayer player, DiscordBotManager bot) {
+        Personal p = personal.get(uuid);
+        if (p == null) {
+            StaticAudioChannel ch = api.createStaticAudioChannel(personalChannelId(uuid));
+            ch.setBypassGroupIsolation(true);
+            p = new Personal(ch, api.createEncoder());
+            personal.put(uuid, p);
+        }
+        if (bot != null && !p.registered) {
+            Personal ref = p;
+            bot.registerPlayer(uuid, mono -> {
+                byte[] opus = ref.encoder.encode(mono);
+                ref.channel.send(opus);
+            });
+            p.registered = true;
+        }
+        if (p.target != conn) {
+            if (p.target != null) {
+                p.channel.removeTarget(p.target);
+            }
+            if (conn != null) {
+                p.channel.addTarget(conn);
+            }
+            p.target = conn;
+            LOGGER.info("Personal Discord audio (mute/volume) now sent to {}", player.getGameProfile().name());
+        }
+    }
+
+    /** Stops feeding a player's personal channel (kept idle for reuse). */
+    private void stopPersonal(UUID uuid, ServerPlayer player, DiscordBotManager bot) {
+        Personal p = personal.get(uuid);
+        if (p == null) {
+            return;
+        }
+        if (p.target != null) {
+            p.channel.removeTarget(p.target);
+            p.target = null;
+        }
+        if (p.registered && bot != null) {
+            bot.unregisterPlayer(uuid);
+            p.registered = false;
+            LOGGER.info("Personal Discord audio for {} cleared (back to group volume)",
+                    player.getGameProfile().name());
+        }
+    }
+
+    private static UUID personalChannelId(UUID player) {
+        return UUID.nameUUIDFromBytes(("discord_voice_bridge:personal:" + player).getBytes(StandardCharsets.UTF_8));
     }
 
     /**

@@ -1,6 +1,6 @@
 package com.discordvoicebridge;
 
-import com.discordvoicebridge.command.ConfigCommand;
+import com.discordvoicebridge.command.DvcCommand;
 import com.discordvoicebridge.config.DiscordVoiceBridgeConfig;
 import com.discordvoicebridge.discord.DiscordBotManager;
 import com.discordvoicebridge.svc.SvcVoicechatPlugin;
@@ -47,7 +47,7 @@ public class DiscordVoiceBridgeMod implements DedicatedServerModInitializer {
         Lang.load();
 
         CommandRegistrationCallback.EVENT.register(
-                (dispatcher, registryAccess, environment) -> ConfigCommand.register(dispatcher, environment));
+                (dispatcher, registryAccess, environment) -> DvcCommand.register(dispatcher, environment));
 
         ServerLifecycleEvents.SERVER_STARTED.register(DiscordVoiceBridgeMod::onServerStarted);
         ServerLifecycleEvents.SERVER_STOPPING.register(server -> {

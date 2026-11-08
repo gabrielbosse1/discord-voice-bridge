@@ -12,8 +12,10 @@ import org.slf4j.LoggerFactory;
 import java.nio.IntBuffer;
 import java.nio.ShortBuffer;
 import java.util.ArrayDeque;
-import java.util.Arrays;
+import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -25,25 +27,31 @@ import java.util.function.Consumer;
  *
  * <h2>Why a custom decoder/mixer</h2>
  * JDA's {@code Decoder.decodeFromOpus} hardcodes {@code frame_size=960}
- * (20 ms @ 48 kHz). Senders that use longer opus frames - high-bitrate
- * music bots emit 40-120 ms frames - are rejected with
- * {@code OPUS_BUFFER_TOO_SMALL} and are silent in the MC group. This class
- * decodes <b>every</b> sender's post-DAVE opus itself with
- * {@code frame_size=5760} (the 120 ms opus maximum), splits the result into
- * 20 ms stereo chunks, time-spreads them through a 20 ms mixer, and hands the
- * summed mono to the SVC side. Long-frame senders become audible and mix
- * correctly with normal 20 ms speakers.
+ * (20 ms @ 48 kHz). Senders that use longer opus frames - high-bitrate music
+ * bots emit 40-120 ms frames - are rejected with {@code OPUS_BUFFER_TOO_SMALL}
+ * and are silent in the MC group. This class decodes <b>every</b> sender's
+ * post-DAVE opus itself with {@code frame_size=5760} (the 120 ms opus
+ * maximum), splits the result into 20 ms chunks with exact sample carry-over,
+ * and a 20 ms timer mixes them into one mono frame per tick.
+ *
+ * <h2>Output</h2>
+ * One shared (unmodified) mono frame goes to the group channel. Players with
+ * a personal mute or volume for one or more Discord senders instead get their
+ * own channel, where each sender is weighted individually:
+ * {@code weight} is 0 when that player muted that sender, otherwise that
+ * player's volume for that sender (default 1.0). The weights are per
+ * (player, Discord user), so muting someone affects only that player - never
+ * the rest of the group, which keeps hearing the unmodified mix.
  *
  * <h2>Health report</h2>
- * Every 5 s one INFO line per active sender:
- * {@code pk} = post-DAVE packet rate, {@code own} = our opus decodes
- * (ok/err), {@code jda} = frames JDA's own 20 ms decoder managed,
- * {@code vol} = window average level, {@code pitch} = dominant pitch
- * (autocorrelation, every 0.5 s; 0/absent = unvoiced), and a state:
- * SPEAKING / MUTED-DTX (packets flowing but &lt; -45 dB) / SILENT (no packets
- * for &gt; 10 s) / +OPUS-ERR (our decoder failing more than it succeeds).
+ * Every 5 s one INFO line per active sender: {@code pk} = post-DAVE packet
+ * rate, {@code own} = our opus decodes (ok/err), {@code jda} = frames JDA's own
+ * 20 ms decoder managed, {@code vol} = window average level, {@code pitch} =
+ * dominant pitch (autocorrelation, every 0.5 s; absent = unvoiced), and a
+ * state: SPEAKING / MUTED-DTX (&lt; -45 dB) / SILENT (no packets &gt; 10 s) /
+ * +OPUS-ERR.
  */
-final class AudioHealth implements AutoCloseable {
+final class DiscordMixer implements AutoCloseable {
 
     private static final Logger LOGGER = LoggerFactory.getLogger("discord_voice_bridge");
 
@@ -55,10 +63,16 @@ final class AudioHealth implements AutoCloseable {
     private static final int MAX_USERS = 32;
     private static final long STALE_MS = 600_000;      // drop a decoder idle for 10 min
 
-    private final Consumer<short[]> sink;
-    private final Map<Long, UserState> users = new ConcurrentHashMap<>();
-    private final ScheduledExecutorService timer;
-    private long lastSinkWarnMs;
+    /** One output stream (the group sink, or a player's personal sink). */
+    private static final class Entry {
+        final UUID player;
+        final Consumer<short[]> sink;
+
+        Entry(UUID player, Consumer<short[]> sink) {
+            this.player = player;
+            this.sink = sink;
+        }
+    }
 
     private static final class UserState {
         // Set under the user lock before the native decoder is freed; an
@@ -66,6 +80,7 @@ final class AudioHealth implements AutoCloseable {
         // can never free a pointer that is about to be used (native crash).
         boolean dead;
         PointerByReference dec;
+        final long senderId;
         final short[] decBuf = new short[MAX_FRAME_SAMPLES * CHANNELS];
         final ArrayDeque<short[]> queue = new ArrayDeque<>();
         // Carry-over of not-yet-chunked interleaved samples so a frame whose
@@ -83,20 +98,38 @@ final class AudioHealth implements AutoCloseable {
         int chunkSincePitch;
         long lastPktMs;
         int ssrc;
+
+        UserState(long senderId) {
+            this.senderId = senderId;
+        }
     }
 
-    AudioHealth(Consumer<short[]> sink) {
-        this.sink = sink;
+    private final Entry defaultEntry;
+    private final Map<UUID, Entry> playerEntries = new ConcurrentHashMap<>();
+    private final Map<Long, UserState> users = new ConcurrentHashMap<>();
+    private final ScheduledExecutorService timer;
+    private long lastSinkWarnMs;
+    // Live per-sender state, refreshed each mix tick; the /dvc menu reads it
+    // to show who is actually producing sound.
+    private final Map<Long, Boolean> speaking = new ConcurrentHashMap<>();
+    private final Map<Long, Long> lastPkt = new ConcurrentHashMap<>();
+    // Per (player, Discord user) personal overrides: a mute (weight 0) and a
+    // volume (0.0-2.0). Default weight for an unset pair is 1.0 (normal).
+    private final Map<UUID, Set<Long>> perMuted = new ConcurrentHashMap<>();
+    private final Map<UUID, Map<Long, Float>> perVolume = new ConcurrentHashMap<>();
+
+    DiscordMixer(Consumer<short[]> sink) {
+        this.defaultEntry = new Entry(null, sink);
         this.timer = Executors.newSingleThreadScheduledExecutor(r -> {
-            Thread t = new Thread(r, "dvc-audio-health");
+            Thread t = new Thread(r, "dvc-discord-mixer");
             t.setDaemon(true);
             return t;
         });
         // One throw (an SVC encoder/channel error, e.g. mid-teardown) must not
         // kill the scheduled tasks: scheduleAtFixedRate suppresses a task
         // forever after an exception, which would mean permanent silence with
-        // no diagnostics. mix warnings are throttled so a persistent failure
-        // does not turn into a 50 warn/s log bomb.
+        // no diagnostics. Sink warnings are throttled so a persistent failure
+        // does not turn into a log bomb.
         timer.scheduleAtFixedRate(() -> {
             try {
                 mixTick();
@@ -104,7 +137,7 @@ final class AudioHealth implements AutoCloseable {
                 long now = System.currentTimeMillis();
                 if (now - lastSinkWarnMs > 5_000) {
                     lastSinkWarnMs = now;
-                    LOGGER.warn("AudioHealth mix tick failed (repeats throttled)", t);
+                    LOGGER.warn("DiscordMixer mix tick failed (repeats throttled)", t);
                 }
             }
         }, 20, 20, TimeUnit.MILLISECONDS);
@@ -112,17 +145,12 @@ final class AudioHealth implements AutoCloseable {
             try {
                 report();
             } catch (Throwable t) {
-                LOGGER.warn("AudioHealth report failed", t);
+                LOGGER.warn("DiscordMixer report failed", t);
             }
         }, 5, 5, TimeUnit.SECONDS);
     }
 
-    /**
-     * One post-DAVE opus packet from JDA (receive thread). The native decode runs
-     * inside the user lock: evictStale/close free the decoder under that same
-     * lock and flip {@link UserState#dead}, so a packet that is still in flight
-     * during a teardown can never decode into a freed native pointer.
-     */
+    /** One post-DAVE opus packet from JDA (receive thread). */
     void onPacket(long userId, int ssrc, byte[] opus) {
         UserState st = state(userId);
         if (st == null) {
@@ -154,7 +182,7 @@ final class AudioHealth implements AutoCloseable {
             int fresh = n * CHANNELS; // interleaved stereo samples just decoded
             int avail = st.carryLen + fresh;
             if (avail > st.carry.length) {
-                st.carry = Arrays.copyOf(st.carry, avail);
+                st.carry = java.util.Arrays.copyOf(st.carry, avail);
             }
             System.arraycopy(st.decBuf, 0, st.carry, st.carryLen, fresh);
             st.carryLen = avail;
@@ -205,7 +233,7 @@ final class AudioHealth implements AutoCloseable {
                 if (dec == null || err.get(0) != 0) {
                     return null;
                 }
-                st = new UserState();
+                st = new UserState(userId);
                 st.dec = dec;
                 users.put(userId, st);
             }
@@ -213,32 +241,106 @@ final class AudioHealth implements AutoCloseable {
         return st;
     }
 
-    /** 20 ms tick: sum one chunk per sender, downmix to mono, push to SVC. */
+    /** 20 ms tick: sum one chunk per sender and emit to the group + personal sinks. */
     private void mixTick() {
-        short[] acc = new short[CHUNK * CHANNELS];
-        boolean any = false;
+        short[] groupMono = new short[CHUNK];
+        short[][] chunks = new short[MAX_USERS][];
+        long[] senders = new long[MAX_USERS];
+        int collected = 0;
         for (UserState st : users.values()) {
-            short[] chunk;
+            short[] stereoChunk;
             synchronized (st) {
-                chunk = st.queue.pollFirst();
+                stereoChunk = st.queue.pollFirst();
             }
-            if (chunk == null) {
+            if (stereoChunk == null) {
                 continue;
             }
-            any = true;
-            for (int i = 0; i < acc.length; i++) {
-                int s = (int) acc[i] + chunk[i];
-                acc[i] = (short) Math.max(-32768, Math.min(32767, s));
+            short[] mono = monoOf(stereoChunk);
+            for (int i = 0; i < CHUNK; i++) {
+                groupMono[i] = clip(groupMono[i] + mono[i]);
             }
-            accumulateVolume(st, chunk);
-            maybePitch(st, chunk);
+            if (collected < chunks.length) {
+                chunks[collected] = mono;
+                senders[collected] = st.senderId;
+                collected++;
+            }
+            accumulateVolume(st, stereoChunk);
+            maybePitch(st, stereoChunk);
         }
-        if (!any) {
-            Arrays.fill(acc, (short) 0); // keep the SVC stream continuous, as JDA's combined did
+        refreshLive();
+        safeAccept(defaultEntry.sink, groupMono);
+        for (Entry e : playerEntries.values()) {
+            short[] personal = new short[CHUNK];
+            for (int k = 0; k < collected; k++) {
+                float w = weightFor(e.player, senders[k]);
+                if (w == 0f) {
+                    continue; // this player muted this sender
+                }
+                short[] c = chunks[k];
+                for (int i = 0; i < CHUNK; i++) {
+                    personal[i] = clip(personal[i] + (int) (c[i] * w));
+                }
+            }
+            safeAccept(e.sink, personal);
         }
-        Consumer<short[]> s = sink;
-        if (s != null) {
-            s.accept(AudioPipeline.stereoToMono(acc));
+    }
+
+    /** Effective per-(player, sender) weight: 0 if muted, else volume (1.0 default). */
+    private float weightFor(UUID player, long senderId) {
+        if (player == null) {
+            return 1f; // group sink: never weighted
+        }
+        Set<Long> m = perMuted.get(player);
+        if (m != null && m.contains(senderId)) {
+            return 0f;
+        }
+        Map<Long, Float> v = perVolume.get(player);
+        if (v != null) {
+            Float f = v.get(senderId);
+            if (f != null) {
+                return f;
+            }
+        }
+        return 1f;
+    }
+
+    private void safeAccept(Consumer<short[]> sink, short[] mono) {
+        try {
+            sink.accept(mono);
+        } catch (Throwable t) {
+            long now = System.currentTimeMillis();
+            if (now - lastSinkWarnMs > 5_000) {
+                lastSinkWarnMs = now;
+                LOGGER.warn("DiscordMixer sink failed (repeats throttled)", t);
+            }
+        }
+    }
+
+    private static short[] monoOf(short[] stereo) {
+        short[] m = new short[CHUNK];
+        for (int i = 0; i < CHUNK; i++) {
+            m[i] = (short) (((int) stereo[i * 2] + stereo[i * 2 + 1]) / 2);
+        }
+        return m;
+    }
+
+    private static short clip(int v) {
+        return (short) Math.max(-32768, Math.min(32767, v));
+    }
+
+    private void refreshLive() {
+        long now = System.currentTimeMillis();
+        for (UserState st : users.values()) {
+            long lp;
+            synchronized (st) {
+                lp = st.lastPktMs;
+            }
+            if (lp > 0) {
+                lastPkt.put(st.senderId, lp);
+                speaking.put(st.senderId, now - lp < 2_000);
+            } else {
+                speaking.remove(st.senderId);
+            }
         }
     }
 
@@ -285,7 +387,7 @@ final class AudioHealth implements AutoCloseable {
     /** 5 s report: one line per sender + a summary of states. */
     private void report() {
         long now = System.currentTimeMillis();
-        int speaking = 0, muted = 0, silent = 0, failing = 0, total = users.size();
+        int speakingCount = 0, muted = 0, silent = 0, failing = 0, total = users.size();
         StringBuilder sb = new StringBuilder();
         for (Map.Entry<Long, UserState> e : users.entrySet()) {
             UserState st = e.getValue();
@@ -308,7 +410,7 @@ final class AudioHealth implements AutoCloseable {
                     muted++;
                 } else {
                     state = "SPEAKING";
-                    speaking++;
+                    speakingCount++;
                 }
                 if (fail) {
                     failing++;
@@ -341,7 +443,7 @@ final class AudioHealth implements AutoCloseable {
             LOGGER.info("Audio health: no senders in the channel");
         } else {
             LOGGER.info("Audio health ({} sender(s), speaking={}, muted={}, silent={}, failing={}): {}",
-                    total, speaking, muted, silent, failing, sb);
+                    total, speakingCount, muted, silent, failing, sb);
         }
     }
 
@@ -365,6 +467,108 @@ final class AudioHealth implements AutoCloseable {
         }
     }
 
+    // ----- live per-sender state (for the /dvc menu) -----
+
+    /** True while a sender produced a packet within the last 2 s. */
+    public boolean isSpeaking(long discordUserId) {
+        return Boolean.TRUE.equals(speaking.get(discordUserId));
+    }
+
+    /** Timestamp (ms) of the sender's last packet, or 0 if none this session. */
+    public long lastPacketMs(long discordUserId) {
+        Long v = lastPkt.get(discordUserId);
+        return v != null ? v : 0;
+    }
+
+    // ----- per-(player, Discord user) personal overrides -----
+
+    /**
+     * Wires a player's personal sink (their own SVC static channel), applying
+     * their remembered per-sender mute/volume weights.
+     */
+    public void registerPlayer(UUID player, Consumer<short[]> sink) {
+        playerEntries.put(player, new Entry(player, sink));
+    }
+
+    public void unregisterPlayer(UUID player) {
+        playerEntries.remove(player);
+    }
+
+    public boolean isPlayerRegistered(UUID player) {
+        return playerEntries.containsKey(player);
+    }
+
+    /** True if this player has any personal mute/volume (needs their own channel). */
+    public boolean needsPersonalChannel(UUID player) {
+        Set<Long> m = perMuted.get(player);
+        if (m != null && !m.isEmpty()) {
+            return true;
+        }
+        Map<Long, Float> v = perVolume.get(player);
+        return v != null && !v.isEmpty();
+    }
+
+    /** Discord user ids this player has a personal mute/volume for (for the menu). */
+    public Set<Long> overriddenSenders(UUID player) {
+        Set<Long> out = new HashSet<>();
+        Set<Long> m = perMuted.get(player);
+        if (m != null) {
+            out.addAll(m);
+        }
+        Map<Long, Float> v = perVolume.get(player);
+        if (v != null) {
+            out.addAll(v.keySet());
+        }
+        return out;
+    }
+
+    /** Mutes/unmutes one Discord sender for this player only. */
+    public void setPlayerSenderMuted(UUID player, long senderId, boolean muted) {
+        if (muted) {
+            perMuted.computeIfAbsent(player, k -> ConcurrentHashMap.newKeySet()).add(senderId);
+        } else {
+            Set<Long> m = perMuted.get(player);
+            if (m != null) {
+                m.remove(senderId);
+                if (m.isEmpty()) {
+                    perMuted.remove(player);
+                }
+            }
+        }
+    }
+
+    public boolean isPlayerSenderMuted(UUID player, long senderId) {
+        Set<Long> m = perMuted.get(player);
+        return m != null && m.contains(senderId);
+    }
+
+    /** Sets this player's volume (0.0-2.0, 1.0 = normal) for one Discord sender. */
+    public void setPlayerSenderVolume(UUID player, long senderId, float volume) {
+        float v = Math.max(0.0f, Math.min(2.0f, volume));
+        if (v <= 1.0f) {
+            Map<Long, Float> m = perVolume.get(player);
+            if (m != null) {
+                m.remove(senderId);
+                if (m.isEmpty()) {
+                    perVolume.remove(player);
+                }
+            }
+        } else {
+            perVolume.computeIfAbsent(player, k -> new ConcurrentHashMap<>()).put(senderId, v);
+        }
+    }
+
+    public float getPlayerSenderVolume(UUID player, long senderId) {
+        Map<Long, Float> v = perVolume.get(player);
+        return v != null && v.get(senderId) != null ? v.get(senderId) : 1.0f;
+    }
+
+    /** Clears a player's personal mute and volume for one Discord sender. */
+    public void clearPlayerSender(UUID player, long senderId) {
+        setPlayerSenderMuted(player, senderId, false);
+        setPlayerSenderVolume(player, senderId, 1.0f);
+    }
+
     @Override
     public void close() {
         timer.shutdownNow();
@@ -377,5 +581,10 @@ final class AudioHealth implements AutoCloseable {
             }
         }
         users.clear();
+        playerEntries.clear();
+        perMuted.clear();
+        perVolume.clear();
+        speaking.clear();
+        lastPkt.clear();
     }
 }

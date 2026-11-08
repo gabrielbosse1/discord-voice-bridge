@@ -8,6 +8,7 @@ import com.discordvoicebridge.discord.DiscordBotManager;
 import me.lucko.fabric.api.permissions.v0.Permissions;
 
 import com.mojang.brigadier.CommandDispatcher;
+import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
 import com.mojang.brigadier.context.CommandContext;
 
@@ -35,27 +36,27 @@ public class ConfigCommand {
 
     private static final String PERMISSION = "discord_voice_bridge.admin";
 
-    public static void register(CommandDispatcher<CommandSourceStack> dispatcher,
-                                Commands.CommandSelection selection) {
-        if (selection != Commands.CommandSelection.DEDICATED) {
-            return;
-        }
+    /**
+     * Builds the admin-only {@code config} subtree (panel + toggle/reload/status).
+     * Attached under the shared {@code dvc} tree by {@link DvcCommand#register},
+     * so {@code /dvc} itself stays available to every player and only
+     * {@code /dvc config ...} needs the admin permission.
+     */
+    public static LiteralArgumentBuilder<CommandSourceStack> configSubtree() {
         // PermissionLevel.OWNERS (4) = the default /op level. Without the level
         // fallback, require(PERMISSION) denies EVERYONE on servers without a
         // permission provider (no LuckPerms), and Brigadier then hides the
         // command entirely, so it looks "unknown" even for OPs.
-        dispatcher.register(literal("dvc")
+        return literal("config")
                 .requires(Permissions.require(PERMISSION, PermissionLevel.OWNERS))
                 .executes(ConfigCommand::showPanel)
-                .then(literal("config")
-                        .executes(ConfigCommand::showPanel)
-                        .then(literal("toggle")
-                                .then(literal("enabled")
-                                        .executes(ConfigCommand::toggleEnabled)))
-                        .then(literal("reload")
-                                .executes(ConfigCommand::reload))
-                        .then(literal("status")
-                                .executes(ConfigCommand::status))));
+                .then(literal("toggle")
+                        .then(literal("enabled")
+                                .executes(ConfigCommand::toggleEnabled)))
+                .then(literal("reload")
+                        .executes(ConfigCommand::reload))
+                .then(literal("status")
+                        .executes(ConfigCommand::status));
     }
 
     private static int showPanel(CommandContext<CommandSourceStack> ctx) throws CommandSyntaxException {
