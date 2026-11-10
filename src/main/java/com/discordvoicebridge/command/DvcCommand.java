@@ -6,6 +6,7 @@ import com.discordvoicebridge.discord.DiscordBotManager;
 
 import com.mojang.brigadier.CommandDispatcher;
 import com.mojang.brigadier.arguments.FloatArgumentType;
+import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import com.mojang.brigadier.context.CommandContext;
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
@@ -56,16 +57,16 @@ public class DvcCommand {
         dispatcher.register(LiteralArgumentBuilder.<CommandSourceStack>literal("dvc")
                 .executes(DvcCommand::menu)
                 .then(literal("list").executes(DvcCommand::menu))
-                .then(literal("mute").then(argument("user", DvcUserArgument.USER)
+                .then(literal("mute").then(argument("user", StringArgumentType.greedyString())
                         .suggests(DvcUserArgument.suggestions()).executes(DvcCommand::mute)))
-                .then(literal("unmute").then(argument("user", DvcUserArgument.USER)
+                .then(literal("unmute").then(argument("user", StringArgumentType.greedyString())
                         .suggests(DvcUserArgument.suggestions()).executes(DvcCommand::unmute)))
                 .then(literal("volume")
-                        .then(argument("user", DvcUserArgument.USER)
+                        .then(argument("user", StringArgumentType.greedyString())
                                 .suggests(DvcUserArgument.suggestions())
                                 .then(argument("percent", FloatArgumentType.floatArg(0f, 200f))
                                         .executes(DvcCommand::volume))))
-                .then(literal("reset").then(argument("user", DvcUserArgument.USER)
+                .then(literal("reset").then(argument("user", StringArgumentType.greedyString())
                         .suggests(DvcUserArgument.suggestions()).executes(DvcCommand::reset)))
                 .then(ConfigCommand.configSubtree()));
     }

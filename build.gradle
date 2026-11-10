@@ -63,6 +63,8 @@ dependencies {
 
     testImplementation "org.junit.jupiter:junit-jupiter:5.11.4"
     testRuntimeOnly "org.junit.platform:junit-platform-launcher"
+    // The command-serialization test walks the brigadier tree of /dvc.
+    testImplementation "com.mojang:brigadier:1.3.11"
     testImplementation "de.maxhenkel.voicechat:voicechat-api:2.6.27"
     shadowRuntime "net.dv8tion:JDA:6.7.0"
     // Bundle the DAVE interop API and every platform's native libdave so the
